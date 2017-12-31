@@ -62,7 +62,7 @@ Type params contain all info for PW calculations
    end
 
    function multiplier(N)
-      return max(1,trunc(Int,100/N)) :: Integer
+      return max(2,trunc(Int,100/(2N))) :: Integer
    end
 
    #Coulomb potential separated into two parts : radial + regular
@@ -70,9 +70,9 @@ Type params contain all info for PW calculations
       mult = multiplier(p.N1)
       function chi(r)
          if r > 1
-            return 0
+            return 0.
          else
-            return exp(-r^4/(1-r^2))
+            return exp(-r^6/(1-r^6))
          end
       end
       V_rad = zeros(Complex128, (2p.N1+1,2p.N1+1,2p.N1+1))
@@ -104,7 +104,7 @@ Type params contain all info for PW calculations
       for i3 in 1:2mult*p.N3+1
          for i2 in 1:2mult*p.N2+1
             for i1 in 1:2mult*p.N1+1
-               r = norm([(i1-1)/(2mult*p.N1+1)*p.L1, (i2-1)/(2mult*p.N2+1)*p.L2, (i3-1)/(2mult*p.N3+1)*p.L3] - X)
+               r = norm(coords(p,i1,i2,i3,mult) - X)
                V_fft[i1,i2,i3] =  -(1-chi(r))/r
             end
          end
@@ -123,8 +123,8 @@ Type params contain all info for PW calculations
       end
    end
 
-   function coords(p::params,i1,i2,i3)
-      return [(i1-1)/(2*p.N1+1)*p.L1, (i2-1)/(2*p.N2+1)*p.L2, (i3-1)/(2*p.N3+1)*p.L3]
+   function coords(p::params,i1,i2,i3,mult)
+      return [(i1-1)/(2mult*p.N1+1)*p.L1, (i2-1)/(2mult*p.N2+1)*p.L2, (i3-1)/(2mult*p.N3+1)*p.L3]
    end
 
    function fft_mode(i,N)
@@ -214,7 +214,7 @@ function phi_H(p::pw_coulomb.params, X, Z)
    for i3 in 1:(2*p.N3+1)
       for i2 in 1:(2*p.N2+1)
          for i1 in 1:(2*p.N1+1)
-            mat[i1,i2,i3] = phi_H_real(pw_coulomb.coords(p,i1,i2,i3)..., X)
+            mat[i1,i2,i3] = phi_H_real(pw_coulomb.coords(p,i1,i2,i3,1)..., X)
          end
       end
    end
@@ -225,7 +225,7 @@ function phi_H2(p::pw_coulomb.params, X1, X2, Z)
    return phi_H(p,X1,Z) + phi_H(p,X2,Z)
 end
 
-# Answer for infinite N,L: -0.5
+# Answer for infinite N,L and Z = 1: -0.5,
 function H_test(N,L,Z)
    X = zeros(3,1)
    X[:,1] = [L/2,L/2,L/2]
