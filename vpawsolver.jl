@@ -65,7 +65,7 @@ PAW must not cross the box boundaries !!
 19/04/2017 : values ok for rc =1.5
 """
 function coords(p::pw_coulomb.params, i1, i2, i3, mult)
-   return [(i1-1)/(2*p.N1*mult+1)*p.L1, (i2-1)/(2*p.N2*mult+1)*p.L2, (i3-1)/(2*p.N3*mult+1)*p.L3]
+   return [(i1-1)/(2p.N1*mult+1)*p.L1, (i2-1)/(2p.N2*mult+1)*p.L2, (i3-1)/(2p.N3*mult+1)*p.L3]
 end
 
 function fft_reshape(A, p::pw_coulomb.params, mult) #uglier than with fftshift but faster
@@ -112,8 +112,8 @@ function fft_paw(rc, X, f, p::pw_coulomb.params, Npaw; mult = pw_coulomb.multipl
       for i1 in 1:(2*p.N1*mult+1)
          for i2 in 1:(2*p.N2*mult+1)
             for i3 in 1:(2*p.N3*mult+1)
-               #r = norm(coords(p,i1,i2,i3,mult) - X)
-               r = sqrt( ((i1-1)/(2*p.N1*mult+1)*p.L1 - X[1])^2 + ((i2-1)/(2*p.N2*mult+1)*p.L2 -X[2])^2 + ((i3-1)/(2*p.N3*mult+1)*p.L3 - X[3])^2 )
+               r = norm(coords(p,i1,i2,i3,mult) - X)
+               #r = sqrt( ((i1-1)/(2*p.N1*mult+1)*p.L1 - X[1])^2 + ((i2-1)/(2*p.N2*mult+1)*p.L2 -X[2])^2 + ((i3-1)/(2*p.N3*mult+1)*p.L3 - X[3])^2 )
                if (r<rc)
                   P[i1,i2,i3,ipaw] = paw.Y_lm(coords(p,i1,i2,i3,mult) - X..., l-1, m)*(f(r,l,n) + g(r,l,n)*V(coords(p,i1,i2,i3,mult)...))
                end
@@ -163,7 +163,7 @@ end
 proj2, diff_phi2, Hdiff_phi2 gives the Fourier coefficients of the PAW functions using direct integration (1D because of the radial symmetry)
 int_num works ONLY for l=0 : gives the FFT of f(r)/r*Y_lm(Θ,ϕ)
 """
-function int_num(rc, X, f, p::pw_coulomb.params, Npaw; tol = 1e-5, order = 10)
+function int_num(rc, X, f, p::pw_coulomb.params, Npaw; tol = 1e-10, order = 5)
    Npawtot = paw.Npawtot(Npaw)
    P = zeros(Complex128, (p.size_psi..., Npawtot))
    function aux_k(r,k,ipaw,l,n) #K : Fourier mode
@@ -179,7 +179,7 @@ function int_num(rc, X, f, p::pw_coulomb.params, Npaw; tol = 1e-5, order = 10)
                k = norm(k_vec)
                if k==0.
                   if l>1
-                     P[i1,i2,i3,ipaw] = complex(0)
+                     P[i1,i2,i3,ipaw] = complex(0.)
                   else
                      P[i1,i2,i3,ipaw] = p.Ntot/(p.L1*p.L2*p.L3)*4pi*paw.Y_lm(1,0,0,0,0)*QuadGK.quadgk(r -> r*f(r,l,n), 0, rc, abstol=tol, order=order)[1]
                   end
@@ -201,7 +201,7 @@ function int_num(rc, X, f, p::pw_coulomb.params, Npaw; tol = 1e-5, order = 10)
    return P
 end
 
-function proj_num(rc, X, p::pw_coulomb.params, coefpaw::paw.pawcoef; tol = 1e-5, order = 10)
+function proj_num(rc, X, p::pw_coulomb.params, coefpaw::paw.pawcoef; tol = 1e-10, order = 5)
    function f(r,l,n)
       if r < rc
          return polyval(coefpaw.proj[n,l], r)
@@ -212,7 +212,7 @@ function proj_num(rc, X, p::pw_coulomb.params, coefpaw::paw.pawcoef; tol = 1e-5,
    return int_num(rc, X, f, p, coefpaw.Npaw; tol=tol, order=order)
 end
 
-function diff_phi_num(rc, X, p::pw_coulomb.params, coefpaw::paw.pawcoef; tol = 1e-5, order = 10)
+function diff_phi_num(rc, X, p::pw_coulomb.params, coefpaw::paw.pawcoef; tol = 1e-10, order = 5)
    function f(r,l,n)
       if r < rc
          return paw.R_nl(r, n+l-1, l-1, coefpaw.Z) - paw.tilde_R_nl(r, rc, n+l-1, l-1, coefpaw.Z, coefpaw.tdR[:,n,l])
@@ -226,11 +226,11 @@ end
 """
 Hrad_diff_phi_num : computes  the Fourier coefficient of the radial part of H(\phi-\tilde\phi) (direct integration)
 """
-function Hrad_diff_phi_num(rc, X, p::pw_coulomb.params, coefpaw::paw.pawcoef, Npaw; tol = 1e-5, order = 10)
+function Hrad_diff_phi_num(rc, X, p::pw_coulomb.params, coefpaw::paw.pawcoef, Npaw; tol = 1e-10, order = 5)
    Hrad_Rnl(r,n,l) = paw.E_n(n,coefpaw.Z)*paw.R_nl(r, n, l, coefpaw.Z) #(-0.5Δ - Z/r) R_nl
    tdR(n,l) = Poly(coefpaw.tdR[:,n-l,l+1])(Poly([0,0,1]))
    Hrad_tdRnl(r,n,l,deriv) = paw.C_nl(n,l,coefpaw.Z)*( 0.5*r^(l+1)*polyval(deriv[2,n-l,l+1],r) + (l+1)*r^l*polyval(deriv[1,n-l,l+1],r)) + coefpaw.Z*paw.tilde_R_nl(r,rc,n,l,coefpaw.Z,coefpaw.tdR[:,n-l,l+1])/r
-   #(0.5Δ + Z/r) \tilde R_nl
+   #(0.5Δ + Z/r) \tilde R_nl, take into account radial laplacian
    der_tdR = Array{Polynomials.Poly{Float64}}(2,max(Npaw...),endof(Npaw))
    for i in 1:2
       for lpaw in eachindex(Npaw)
@@ -246,6 +246,7 @@ function Hrad_diff_phi_num(rc, X, p::pw_coulomb.params, coefpaw::paw.pawcoef, Np
          return 0.
       end
    end
+#   plot(0:0.01:2rc,[f(x,1,1) for x in 0:0.01:2rc]) : plot OK
    return int_num(rc, X, f, p, coefpaw.Npaw; tol=tol, order=order)
 end
 
@@ -266,7 +267,7 @@ function Hdiff_phi_pot(rc, X, p::pw_coulomb.params, coefpaw::paw.pawcoef, N ; mu
    return fft_paw(rc, X[:,N], null2, p, coefpaw.Npaw; mult = mult, V=pot, g=g)
 end
 
-function Hdiff_phi_num(rc, X, p::pw_coulomb.params, coefpaw::paw.pawcoef, n, Npaw ; mult=5, tol = 1e-5, order = 10) #n : atom site
+function Hdiff_phi_num(rc, X, p::pw_coulomb.params, coefpaw::paw.pawcoef, n, Npaw ; mult=pw_coulomb.multiplier(p.N1), tol = 1e-14, order = 5) #n : atom site
    diff_phi_mat = Hrad_diff_phi_num(rc, X[:,n], p::pw_coulomb.params, coefpaw::paw.pawcoef, Npaw; tol=tol, order=order)
    if size(X)[2] == 1
       return diff_phi_mat
@@ -278,6 +279,7 @@ end
 
 function D_ij(rc, X, coef_PAW, N, Npaw, Z) #N : atom site (working)
    Rnl_diff(r, rc, l1, l2, coef_PAW, j, k) = (paw.R_nl(r, l1+j, l1, Z) - paw.tilde_R_nl(r, rc, l1+j, l1, Z, coef_PAW[:,j,l1+1]))*(paw.R_nl(r, l2+k, l2, Z) - paw.tilde_R_nl(r, rc, l2+k, l2, Z, coef_PAW[:,k,l2+1]))
+   DRnl_diff(r, rc, l1, l2, coef_PAW, j, k) = paw.Ddiff(r, rc, l1+j, coef_PAW[:,j,l1+1], l1, Z)*paw.Ddiff(r, rc, l2+k, coef_PAW[:,k,l2+1], l2, Z)
    Npawtot = paw.Npawtot(Npaw)
    D = zeros(Complex128,(Npawtot,Npawtot))
    err = zeros(Complex128,(Npawtot,Npawtot))
@@ -287,8 +289,8 @@ function D_ij(rc, X, coef_PAW, N, Npaw, Z) #N : atom site (working)
       for m in 1:(2lpaw-1)
          for j in 1:Npaw[lpaw]
             for k in 1:Npaw[lpaw]
-               kin = QuadGK.quadgk(r -> paw.Ddiff(r, rc, l+j, coef_PAW[:,j,lpaw], l, Z)*paw.Ddiff(r, rc, l+k, coef_PAW[:,k,lpaw], l, Z), 0, rc)[1]
-               pot1 = QuadGK.quadgk(r -> Z*Rnl_diff(r, rc, l, l, coef_PAW, j, k)/r, 0, rc)[1]
+               kin = QuadGK.quadgk(r -> DRnl_diff(r, rc, l, l, coef_PAW, j, k) + l*(l+1)/r^2*Rnl_diff(r, rc, l, l, coef_PAW, j, k), 0, rc, reltol=1e-10)[1]
+               pot1 = QuadGK.quadgk(r -> Z*Rnl_diff(r, rc, l, l, coef_PAW, j, k)/r, 0, rc, reltol=1e-10)[1]
                D[j+ind,k+ind] = 0.5*kin - pot1
             end
          end
@@ -420,7 +422,8 @@ function energy_vpaw(fpaw::pawfunc, p::pw_coulomb.params, seed)
        meankin = sum(p.kin[i]*abs2(psi[i]) for i = 1:p.Ntot) / (vecnorm(psi)^2)
        return psi ./ (0.1*meankin .+ p.kin[:]) # this should be tuned but works more or less
     end
-   return eigensolvers.eig_pcg(H_1var, seed[:],P=P, B=S_1var, tol=1e-10, maxiter = 1000)
+#    return eigensolvers.eig_lanczos(H_1var, seed[:], B=S_1var, m=1, Imax = 1000)
+   return eigensolvers.eig_pcg(H_1var, seed[:],P=P, B=S_1var, tol=1e-10, maxiter = 1000, do_cg = false)
 end
 
 function tdphi_test(N,L,X,p::pw_coulomb.params,rc, Z)
@@ -513,8 +516,9 @@ tdphi_fft to test orthogonality of \tilde\phi_j and \tilde p_k
 """
 function ortho_test(rc,N,L,Npaw,Z,mult;proj=vpawsolver.proj_num)
    V(x,y,z) = 1.
-   p = pw_coulomb.params(N,L,V)
-   coefpaw = paw.pawcoef(Z, rc, Npaw)
+   X = zeros(3,1)
+   p = pw_coulomb.params(N,L,X,Z)
+   coefpaw = paw.pawcoef(Z, rc, Npaw,GS = paw.GS_custom, proj_gen = paw.coef_proj_custom)
    X = zeros(3,1)
    X[:,1] = [L/2, L/2, L/2]
    P = proj(rc, X[:,1], p, coefpaw)
