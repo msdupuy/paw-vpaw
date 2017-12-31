@@ -6,7 +6,7 @@ using GSL
 using Base.Test
 
 #harmonique spherique
-function Y_lmreal(x,y,z,l,m)
+function Y_lm(x,y,z,l,m)
    r = sqrt(x^2 + y^2 + z^2)
    phi = atan(y/x)
    if m < 0
@@ -18,7 +18,7 @@ function Y_lmreal(x,y,z,l,m)
    end
 end
 
-function Y_lm(x,y,z,l,m)
+function Y_lmcomplex(x,y,z,l,m)
    r = sqrt(x^2 + y^2 + z^2)
    phi = atan2(y,x)
    if m >= 0
@@ -293,7 +293,7 @@ function Ddiff(r, rc, n, coef_PAW, l, Z)
    if r > rc
       return 0.
    else
-      P = Poly(coef_PAW)(Poly([0,0,1]))*poly(zeros(l+1))
+      P = Poly(coef_PAW)
       L(r) = GSL.sf_laguerre_n(n-l-1, 2l+1, 2Z*r/n)
       function lag_der(r) #derivative of the associated Laguerre polynomials
          if 1 > n-l-1
@@ -302,9 +302,9 @@ function Ddiff(r, rc, n, coef_PAW, l, Z)
             return (-1)*GSL.sf_laguerre_n(n-l-2, 2+2l, 2Z*r/n)
          end
       end
-      der_phi = exp(-Z*r/n)*(-Z*r^(l+1)*L(r)/n + (l+1)*r^l*L(r) + 2Z/n*lag_der(r)*r^(l+1))
-      der_tdphi = polyval(polyder(P),r)
-      return C_nl(n,l,Z)*(der_phi - der_tdphi) + l*(l+1)/r^2*(R_nl(r, n, l, Z) - tilde_R_nl(r, rc, n, l, Z, coef_PAW))
+      der_phi = exp(-Z*r/n)*(-Z/n*r^(l+1)*L(r) + (l+1)*r^l*L(r) + 2Z/n*lag_der(r)*r^(l+1))
+      der_tdphi = 2r^(l+2)*polyval(polyder(P),r^2) + (l+1)*r^l*polyval(P,r^2)
+      return C_nl(n,l,Z)*(der_phi - der_tdphi)
    end
 end
 
