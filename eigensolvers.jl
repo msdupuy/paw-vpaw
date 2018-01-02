@@ -153,7 +153,12 @@ function cg(A,b;P=Id,x0=b,tol=1e-10,Imax=1000)
    return x, i, norm(h)
 end
 
-function eig_lanczos(A,x0; m=3, B=Id, tol=5e-5, Imax=min(1000,size(x0)[1]))
+"""
+eig_lanczos returns the eigenvalues of Ax = λBx where B is positive-definite
+numerical instabilities remain --> selective orthogonalization to implement ?
+"""
+
+function eig_lanczos(A,x0; m=3, B=Id, tol=1e-5, Imax=min(1000,size(x0)[1]))
    #output
    vp = zeros(m)
    Vp = zeros(eltype(x0),size(x0)[1],m)
@@ -161,7 +166,8 @@ function eig_lanczos(A,x0; m=3, B=Id, tol=5e-5, Imax=min(1000,size(x0)[1]))
    resid[1] = 1.
 
    #Lanczos matrices
-   T = zeros(Imax,Imax) #tridiagonal matrix
+   diag_T = zeros(Imax)
+   off_diag_T = zeros(Imax-1) #T = SymTridiagonal(diag_T,off_diag_T)
    V = zeros(eltype(x0),size(x0)[1],Imax) #contains the bi-orthogonal vectors v_j
    W = zeros(eltype(x0),size(x0)[1],Imax) #contains the bi-orthogonal vectors w_j
 
@@ -169,13 +175,14 @@ function eig_lanczos(A,x0; m=3, B=Id, tol=5e-5, Imax=min(1000,size(x0)[1]))
    i=1
    w_temp = B(x0)
    b = sqrt(x0'*w_temp)
+   @test abs(real(b)) > 1e-14
    W[:,1] = 1/b*w_temp
    V[:,1] = 1/b*x0
    r_temp = A(V[:,1])
    a=V[:,1]'*r_temp
    @test abs(imag(a)) < 1e-10
-   T[1,1] = real(a)
-   r = r_temp - T[1,1]*W[:,1]
+   diag_T[1] = real(a)
+   r = r_temp - diag_T[1]*W[:,1]
    q = cg(B,r,x0=r)[1] #tol=1e-10, Imax=1000
 
    #iteration
@@ -183,30 +190,26 @@ function eig_lanczos(A,x0; m=3, B=Id, tol=5e-5, Imax=min(1000,size(x0)[1]))
       i += 1
       b = sqrt(q'*r)
       @test abs(imag(b)) < 1e-10
-      T[i,i-1] = real(b)
-      T[i-1,i] = T[i,i-1]
-      @test T[i-1,i] > 1e-14
-      V[:,i]=q/T[i-1,i]
-      W[:,i] = r/T[i-1,i]
+      off_diag_T[i-1] = real(b)
+      @test off_diag_T[i-1] > 1e-14
+      V[:,i]=q/off_diag_T[i-1]
+      W[:,i] = r/off_diag_T[i-1]
       r_temp = A(V[:,i])
       a = r_temp'*V[:,i]
       @test abs(imag(a)) < 1e-10
-      T[i,i] = real(a)
-      r = r_temp - T[i,i]*W[:,i] - T[i-1,i]*W[:,i-1]
-      if i < m
-         resid[i] = 1.
-      else
-         vp, Vp = eig(T[1:i,1:i])
-         for k in 1:m
-            resid[i] += T[i,i-1]*abs(Vp[i,k])/m
-         end
+      diag_T[i] = real(a)
+      r = r_temp - diag_T[i]*W[:,i] - off_diag_T[i-1]*W[:,i-1]
+      vp, Vp = eig(SymTridiagonal(diag_T[1:i],off_diag_T[1:i-1]))
+      for k in 1:min(i,m)
+         resid[i] += off_diag_T[i-1]*abs(Vp[i,k])/m
       end
       println("iter $i, λ = $(vp[1]), res = $(resid[i])")
       q,i_cg,cg_tol = cg(B,r,x0=r) #tol=1e-10, Imax=1000
       @test cg_tol < 1e-8
       #q = B\r
    end
-   return (V[:,1:i]*Vp)[:,1:m], vp[1:m], resid
+   return (V[:,1:i]*Vp)[:,1:min(i,m)], vp[1:min(i,m)], resid
+#   return (Vp'*V[1:i,:])'[:,1:min(i,m)], vp[1:min(i,m)], resid
 end
 
 end
