@@ -61,40 +61,6 @@ X : position of the nucleus
 support of the projector function at the center of the box
 PAW must not cross the box boundaries !!
 
-04/04/2017 : values of projector very high => fft not stable (fft(ifft) \not= Id)
-19/04/2017 : values ok for rc =1.5
-"""
-function coords(p::pw_coulomb.params, i1, i2, i3, mult)
-   return [(i1-1)/(2p.N1*mult+1)*p.L1, (i2-1)/(2p.N2*mult+1)*p.L2, (i3-1)/(2p.N3*mult+1)*p.L3]
-end
-
-function fft_reshape(A, p::pw_coulomb.params, mult) #uglier than with fftshift but faster
-   B = zeros(Complex128, p.size_psi)
-   function aux(i)
-      if i==0
-         return 1:(p.N1+1)
-      else
-         return (p.N1*(2mult-1)+2):(2p.N1*mult+1)
-      end
-   end
-   function fft_mode_vec(i)
-      if i==0
-         return 1:(p.N1+1)
-      else
-         return (p.N1+2):(2p.N1+1)
-      end
-   end
-   for i1 in 0:1
-      for i2 in 0:1
-         for i3 in 0:1
-            B[fft_mode_vec(i1), fft_mode_vec(i2), fft_mode_vec(i3)] = A[aux(i1), aux(i2), aux(i3)]
-         end
-      end
-   end
-   return p.Ntot/((2*p.N1*mult+1)*(2*p.N2*mult+1)*(2*p.N3*mult+1))*B
-end
-
-"""
 fft_paw : performs FFT of f(r)Y_lm(Θ,ϕ) with support B(X, rc)
 """
 null(x::Float64,y::Float64,z::Float64) = 0.
@@ -112,16 +78,16 @@ function fft_paw(rc, X, f, p::pw_coulomb.params, Npaw; mult = pw_coulomb.multipl
       for i1 in 1:(2*p.N1*mult+1)
          for i2 in 1:(2*p.N2*mult+1)
             for i3 in 1:(2*p.N3*mult+1)
-               r = norm(coords(p,i1,i2,i3,mult) - X)
+               r = norm(pw_coulomb.coords(p,i1,i2,i3,mult) - X)
                #r = sqrt( ((i1-1)/(2*p.N1*mult+1)*p.L1 - X[1])^2 + ((i2-1)/(2*p.N2*mult+1)*p.L2 -X[2])^2 + ((i3-1)/(2*p.N3*mult+1)*p.L3 - X[3])^2 )
                if (r<rc)
-                  P[i1,i2,i3,ipaw] = paw.Y_lm(coords(p,i1,i2,i3,mult) - X..., l-1, m)*(f(r,l,n) + g(r,l,n)*V(coords(p,i1,i2,i3,mult)...))
+                  P[i1,i2,i3,ipaw] = paw.Y_lm(pw_coulomb.coords(p,i1,i2,i3,mult) - X..., l-1, m)*(f(r,l,n) + g(r,l,n)*V(pw_coulomb.coords(p,i1,i2,i3,mult)...))
                end
             end
          end
       end
       @views P[:,:,:,ipaw] = fft(P[:,:,:,ipaw]) #cannot do on site fft (not doing the right thing)
-      @views Pout[:,:,:,ipaw] = fft_reshape(P[:,:,:,ipaw], p, mult)
+      @views Pout[:,:,:,ipaw] = pw_coulomb.fft_reshape(P[:,:,:,ipaw], p, mult, 1)
    end
    return Pout
 end
@@ -421,9 +387,9 @@ function energy_vpaw(fpaw::pawfunc, p::pw_coulomb.params, seed)
    function P(psi)
        meankin = sum(p.kin[i]*abs2(psi[i]) for i = 1:p.Ntot) / (vecnorm(psi)^2)
        return psi ./ (0.1*meankin .+ p.kin[:]) # this should be tuned but works more or less
-    end
-#    return eigensolvers.eig_lanczos(H_1var, seed[:], B=S_1var, m=1, Imax = 1000)
-   return eigensolvers.eig_pcg(H_1var, seed[:],P=P, B=S_1var, tol=1e-10, maxiter = 1000, do_cg = false)
+   end
+   return eigensolvers.eig_lanczos(H_1var, seed[:], B=S_1var, m=5, Imax = 1000)
+#   return eigensolvers.eig_pcg(H_1var, seed[:],P=P, B=S_1var, tol=1e-10, maxiter = 1000, do_cg = false)
 end
 
 function tdphi_test(N,L,X,p::pw_coulomb.params,rc, Z)
@@ -432,7 +398,7 @@ function tdphi_test(N,L,X,p::pw_coulomb.params,rc, Z)
    for i1 in 1:(2*N+1)
       for i2 in 1:(2*N+1)
          for i3 in 1:(2*N+1)
-            r = norm(pw_coulomb.coords(p,i1,i2,i3) - X)
+            r = norm(pw_coulomb.coords(p,i1,i2,i3,1) - X)
             tdphi[i1,i2,i3] = paw.tilde_R_nl(r, rc, 1, 0, Z, coef_tdR)/r
          end
       end
@@ -464,8 +430,8 @@ function guess_H2(rc, X1, X2, p::pw_coulomb.params, Z)
    for i1 in 1:(2*p.N1+1)
       for i2 in 1:(2*p.N2+1)
          for i3 in 1:(2*p.N3+1)
-            r1 = norm(pw_coulomb.coords(p,i1,i2,i3) - X1)
-            r2 = norm(pw_coulomb.coords(p,i1,i2,i3) - X2)
+            r1 = norm(pw_coulomb.coords(p,i1,i2,i3,1) - X1)
+            r2 = norm(pw_coulomb.coords(p,i1,i2,i3,1) - X2)
             tdphi[i1,i2,i3] = paw.tilde_R_nl(r1, rc, 1, 0, Z, coef_tdR)/r1 + paw.tilde_R_nl(r2, rc, 1, 0, Z, coef_tdR)/r2
          end
       end
@@ -533,12 +499,12 @@ function ortho_test(rc,N,L,Npaw,Z,mult;proj=vpawsolver.proj_num)
             for i3 in 1:(2*p.N3*mult+1)
                #r = norm(vpawsolver.coords(p,i1,i2,i3,mult) - X[:,1])
                r = sqrt( ((i1-1)/(2*p.N1*mult+1)*p.L1 - L/2)^2 + ((i2-1)/(2*p.N2*mult+1)*p.L2 -L/2)^2 + ((i3-1)/(2*p.N3*mult+1)*p.L3 - L/2)^2 )
-               temp_tdphi[i1,i2,i3,ipaw] = paw.Y_lm(vpawsolver.coords(p,i1,i2,i3,mult) - X[:,1]..., l-1, m)*tdphi(r,l,n)/r
+               temp_tdphi[i1,i2,i3,ipaw] = paw.Y_lm(pw_coulomb.coords(p,i1,i2,i3,mult) - X[:,1]..., l-1, m)*tdphi(r,l,n)/r
             end
          end
       end
       @views temp_tdphi[:,:,:,ipaw] = fft(temp_tdphi[:,:,:,ipaw]) #cannot do on site fft (not doing the right thing)
-      @views tdPhi[:,:,:,ipaw] = vpawsolver.fft_reshape(temp_tdphi[:,:,:,ipaw], p, mult)
+      @views tdPhi[:,:,:,ipaw] = pw_coulomb.fft_reshape(temp_tdphi[:,:,:,ipaw], p, mult, 1)
    end
    out = zeros(Complex128,(Npawtot,Npawtot))
    for i1 in 1:Npawtot
