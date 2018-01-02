@@ -6,7 +6,7 @@ using GSL
 using Base.Test
 
 #harmonique spherique
-function Y_lm(x,y,z,l,m)
+function Y_lm_real(x,y,z,l,m) #02/01/2018 : real Y_lm broken
    r = sqrt(x^2 + y^2 + z^2)
    phi = atan(y/x)
    if m < 0
@@ -18,7 +18,7 @@ function Y_lm(x,y,z,l,m)
    end
 end
 
-function Y_lmcomplex(x,y,z,l,m)
+function Y_lm(x,y,z,l,m)
    r = sqrt(x^2 + y^2 + z^2)
    phi = atan2(y,x)
    if m >= 0
