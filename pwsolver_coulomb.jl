@@ -1,5 +1,6 @@
 """
 PW solver with Coulomb potential separated into two parts : radial + regular
+Coulomb potential Fourier coefficients computed on a grid twice as large because of convolution with \hat\psi_K
 """
 
 module pw_coulomb
@@ -7,14 +8,6 @@ using Base.Test
 using eigensolvers
 using QuadGK
 using Combinatorics
-# import Base.* #tests for iterative eigensolver
-# import Base.transpose
-# import Base.size
-# import Base.eltype
-# import Base.LinAlg.issymmetric
-# import Base.LinAlg.A_mul_B!
-
-
 
 """
 Type params contain all info for PW calculations
@@ -43,31 +36,31 @@ Type params contain all info for PW calculations
             return out
          end
          p = new(N,N,N,(2N+1)^3,(2N+1,2N+1,2N+1),L,L,L,V)
-         p.V_grid = zeros(Complex128,(2N+1,2N+1,2N+1))
+         p.V_grid = zeros(Complex128,(4N+1,4N+1,4N+1)) #larger grid for convolution
          for i in 1:size(X,2)
             p.V_grid += Z*coulomb(p,X[:,i])
          end
          p.kin = zeros(2N+1,2N+1,2N+1)
-         for i3 in 1:(2*p.N3+1)
-            for i2 in 1:(2*p.N2+1)
-               for i1 in 1:(2*p.N1+1)
-                  p.kin[i1,i2,i3] = 2*pi^2*((dif(i1,p.N1)/p.L1)^2 + (dif(i2,p.N2)/p.L2)^2
-                  + (dif(i3,p.N3)/p.L3)^2)
+         for i3 in 1:(2p.N3+1)
+            for i2 in 1:(2p.N2+1)
+               for i1 in 1:(2p.N1+1)
+                  p.kin[i1,i2,i3] = 2*pi^2*((fft_mode(i1,p.N1)/p.L1)^2 + (fft_mode(i2,p.N2)/p.L2)^2
+                  + (fft_mode(i3,p.N3)/p.L3)^2)
                end
             end
          end
-         p.fft_plan = plan_fft(zeros(Complex128,p.size_psi))
+         p.fft_plan = plan_fft(zeros(Complex128,(4p.N1+1,4p.N2+1,4p.N3+1)))
          return p
       end
    end
 
-   function multiplier(N)
-      return max(2,trunc(Int,100/(2N))) :: Integer
+   function multiplier(N) #returns FFT multiplier to have consistent FFT with regard to the plane-wave cut-off
+      return max(2,trunc(Int,60/(2N))) :: Integer
    end
 
-   #Coulomb potential separated into two parts : radial + regular
+   #Coulomb potential separated into two parts : radial + regular, computed on a grid twice larger
    function coulomb(p :: pw_coulomb.params,X)
-      mult = multiplier(p.N1)
+      mult = multiplier(2p.N1)
       function chi(r)
          if r > 1
             return 0.
@@ -75,13 +68,13 @@ Type params contain all info for PW calculations
             return exp(-r^6/(1-r^6))
          end
       end
-      V_rad = zeros(Complex128, (2p.N1+1,2p.N1+1,2p.N1+1))
-      V_fft = zeros(Complex128, (2mult*p.N1+1,2mult*p.N1+1,2mult*p.N1+1))
+      V_rad = zeros(Complex128, (4p.N1+1,4p.N1+1,4p.N1+1))
+      V_fft = zeros(Complex128, (4mult*p.N1+1,4mult*p.N1+1,4mult*p.N1+1))
       #radial part
-      for i3 in 1:2p.N1+1
+      for i3 in 1:4p.N1+1
          for i2 in 1:i3
             for i1 in 1:i2
-               k_vec = fft_mode.([i1,i2,i3],[p.N1,p.N2,p.N3])
+               k_vec = fft_mode.([i1,i2,i3],[2p.N1,2p.N2,2p.N3])
                k = norm(k_vec)
                integrand(r) = chi(r)*sin(2pi*k*r/p.L1)
                if k==0.
@@ -91,38 +84,30 @@ Type params contain all info for PW calculations
                   #remplissage du reste de la matrice
                   P = unique(permutations([i1,i2,i3]))
                   for j in 2:endof(P)
-                     k_vec = fft_mode.(P[j],[p.N1,p.N1,p.N1])
+                     k_vec = fft_mode.(P[j],[2p.N1,2p.N1,2p.N1])
                      V_rad[P[j]...] = exp(-2*im*pi*dot(k_vec,X)/p.L1)*V_rad[i1,i2,i3]
                   end
-                  k_vec = fft_mode.([i1,i2,i3],[p.N1,p.N1,p.N1])
+                  k_vec = fft_mode.([i1,i2,i3],[2p.N1,2p.N1,2p.N1])
                   V_rad[i1,i2,i3] = exp(-2*im*pi*dot(k_vec,X)/p.L1)*V_rad[i1,i2,i3]
                end
             end
          end
       end
       #FFT
-      for i3 in 1:2mult*p.N3+1
-         for i2 in 1:2mult*p.N2+1
-            for i1 in 1:2mult*p.N1+1
-               r = norm(coords(p,i1,i2,i3,mult) - X)
+      for i3 in 1:4mult*p.N3+1
+         for i2 in 1:4mult*p.N2+1
+            for i1 in 1:4mult*p.N1+1
+               r = norm(coords(p,i1,i2,i3,2mult) - X)
                V_fft[i1,i2,i3] =  -(1-chi(r))/r
             end
          end
       end
-      return p.Ntot*V_rad + fft_reshape(fft(V_fft),p,mult)
+      return (4p.N1+1)^3*V_rad + fft_reshape(fft(V_fft),p,mult,2)
    end
 
    """
    FFT stuff
    """
-   function dif(i,N)
-      if (i <= N+1)
-         return i-1
-      else
-         return i-2*N-2
-      end
-   end
-
    function coords(p::params,i1,i2,i3,mult)
       return [(i1-1)/(2mult*p.N1+1)*p.L1, (i2-1)/(2mult*p.N2+1)*p.L2, (i3-1)/(2mult*p.N3+1)*p.L3]
    end
@@ -135,53 +120,62 @@ Type params contain all info for PW calculations
       end
    end
 
-   function fft_reshape(A, p::pw_coulomb.params, mult) #uglier than with fftshift but faster
-      B = zeros(Complex128, p.size_psi)
-      function aux(i)
-         if i==0
-            return 1:(p.N1+1)
-         else
-            return (p.N1*(2mult-1)+2):(2p.N1*mult+1)
-         end
+   function aux(i,p::params,mult,n)
+      if i==0
+         return 1:(n*p.N1+1) #positive frequencies
+      else
+         return (n*p.N1*(2mult-1)+2):(2*n*p.N1*mult+1) #negative frequencies
       end
-      function fft_mode_vec(i)
-         if i==0
-            return 1:(p.N1+1)
-         else
-            return (p.N1+2):(2p.N1+1)
-         end
+   end
+
+   function fft_mode_vec(i,p::params,n)
+      if i==0
+         return 1:(n*p.N1+1) #positive frequencies
+      else
+         return (n*p.N1+2):(2n*p.N1+1) #negative frequencies
       end
+   end
+
+   function fft_reshape(A, p::pw_coulomb.params, mult,n) #uglier than with fftshift but faster
+      B = zeros(Complex128, (2n*p.N1+1,2n*p.N2+1,2n*p.N3+1))
       for i1 in 0:1
          for i2 in 0:1
             for i3 in 0:1
-               B[fft_mode_vec(i1), fft_mode_vec(i2), fft_mode_vec(i3)] = A[aux(i1), aux(i2), aux(i3)]
+               B[fft_mode_vec(i1,p,n), fft_mode_vec(i2,p,n), fft_mode_vec(i3,p,n)] = A[aux(i1,p,mult,n), aux(i2,p,mult,n), aux(i3,p,mult,n)]
             end
          end
       end
-      return p.Ntot/((2*p.N1*mult+1)*(2*p.N2*mult+1)*(2*p.N3*mult+1))*B
+      return (2n*p.N1+1)*(2n*p.N2+1)*(2n*p.N3+1)/((2n*p.N1*mult+1)*(2n*p.N2*mult+1)*(2n*p.N3*mult+1))*B
    end
+
+   function test_reshape() #missing fft multiplier
+      X = zeros(3,1)
+      X[:,1] = [2.5,2.5,2.5]
+      p = params(5,5.,X,3.)
+      psi = randn(21,21,21)
+      return vecnorm(fft_reshape(psi,p,2) - ifftshift(fftshift(psi)[p.N1+1:3p.N1+1,p.N1+1:3p.N1+1,p.N1+1:3p.N1+1]))
+   end
+
+   function inv_fft_reshape(psi, p::params)
+      fft_large_psi = zeros(Complex128,(4p.N1+1,4p.N2+1,4p.N3+1))
+      for i1 in 0:1
+         for i2 in 0:1
+            for i3 in 0:1
+               fft_large_psi[aux(i1,p,2,1), aux(i2,p,2,1), aux(i3,p,2,1)] = psi[fft_mode_vec(i1,p,1), fft_mode_vec(i2,p,1), fft_mode_vec(i3,p,1)]
+            end
+         end
+      end
+      return ((4p.N1+1)*(4p.N2+1)*(4p.N3+1))/p.Ntot*fft_large_psi
+   end
+
 
 
 
    # Applies H on psi
    function ham(p::params, psi)
       @assert size(psi) == p.size_psi
-      return p.fft_plan*((p.fft_plan\psi).*(p.fft_plan\p.V_grid)) .+ p.kin.*psi
+      return fft_reshape(p.fft_plan*((p.fft_plan\p.V_grid).*(p.fft_plan\inv_fft_reshape(psi,p))), p, 2, 1) .+ p.kin.*psi
    end
-
-   # function *(p::params,psi::Array{Complex128,1})
-   #    return H(psi)
-   # end
-   # function size(p::params)
-   #    return (p.Ntot,p.Ntot)
-   # end
-   # function eltype(p::params)
-   #    return eltype(1.2*im)
-   # end
-   #
-   # function Base.LinAlg.issymmetric(p::params)
-   #    return true
-   # end
 
    #solves the eigenproblem with psi0
    function energy(p::params, psi0; args...)
@@ -190,9 +184,8 @@ Type params contain all info for PW calculations
          meankin = sum(p.kin[i]*abs2(psi[i]) for i = 1:p.Ntot) / (vecnorm(psi)^2)
          return psi ./ (.2*meankin .+ p.kin[:]) # this should be tuned but works more or less
       end
-
-      #return eigs(p,v0=psi0[:],nev=3, which=:SR)
-      return eigensolvers.eig_pcg(H, psi0[:], P=P; args...)
+      return eigensolvers.eig_lanczos(H, psi0[:], m=5, Imax = 1000)
+#      return eigensolvers.eig_pcg(H, psi0[:], P=P; args...)
    end
 
 
@@ -218,7 +211,7 @@ function phi_H(p::pw_coulomb.params, X, Z)
          end
       end
    end
-   return p.fft_plan*mat
+   return fft(mat)
 end
 
 function phi_H2(p::pw_coulomb.params, X1, X2, Z)
@@ -289,6 +282,23 @@ function herm(N,L,Z)
    pot_psi = convn(fftshift(pot),fftshift(psi))
    return vecdot(psi,ifftshift(pot_psi[2p.N1+1:4p.N1+1,2p.N2+1:4p.N2+1,2p.N3+1:4p.N3+1]))
 end
+
+
+   function test_V_symmetric()
+      X = zeros(3,1)
+      X[:,1] = [2.5,2.5,2.5]
+      p = params(5,5.,X,3.)
+      p.V_grid = fftshift(p.V_grid)
+      V_transpose = zeros(Complex128,(4p.N1+1,4p.N1+1,4p.N1+1))
+      for i1 in 1:4p.N1+1
+         for i2 in 1:4p.N2+1
+            for i3 in 1:4p.N3+1
+               V_transpose[i1,i2,i3] = p.V_grid[4p.N1+2-i1,4p.N2+2-i2,4p.N3+2-i3]
+            end
+         end
+      end
+      return vecnorm(p.V_grid - conj.(V_transpose),Inf)
+   end
 
 # #test for V = -Z/|x| and check if the solution is radial
 # function energy_check(V, N1, N2, N3, L1, L2, L3, seed)
