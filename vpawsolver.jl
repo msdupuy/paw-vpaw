@@ -388,7 +388,7 @@ function energy_vpaw(fpaw::pawfunc, p::pw_coulomb.params, seed)
        meankin = sum(p.kin[i]*abs2(psi[i]) for i = 1:p.Ntot) / (vecnorm(psi)^2)
        return psi ./ (0.1*meankin .+ p.kin[:]) # this should be tuned but works more or less
    end
-   return eigensolvers.eig_lanczos(H_1var, seed[:], B=S_1var, m=5, Imax = 1000)
+   return eigensolvers.eig_lanczos(H_1var, seed[:], B=S_1var, m=5, Imax = 400, do_so=true, norm_A = 6pi^2*p.N1)
 #   return eigensolvers.eig_pcg(H_1var, seed[:],P=P, B=S_1var, tol=1e-10, maxiter = 1000, do_cg = false)
 end
 
