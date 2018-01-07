@@ -155,10 +155,10 @@ end
 
 """
 eig_lanczos returns the eigenvalues of Ax = λBx where B is positive-definite
-numerical instabilities remain --> selective orthogonalization to implement ?
+use selective orthogonalisation (do_so=true) if numerical instabilities 
 """
 
-function eig_lanczos(A,x0; m=3, B=Id, tol=1e-5, Imax=min(1000,size(x0)[1]))
+function eig_lanczos(A,x0; m=3, B=Id, tol=1e-5, Imax=min(1000,size(x0)[1]), norm_A = norm(A(x0))/norm(x0), do_so = false)
    #output
    vp = zeros(m)
    Vp = zeros(eltype(x0),size(x0)[1],m)
@@ -170,6 +170,15 @@ function eig_lanczos(A,x0; m=3, B=Id, tol=1e-5, Imax=min(1000,size(x0)[1]))
    off_diag_T = zeros(Imax-1) #T = SymTridiagonal(diag_T,off_diag_T)
    V = zeros(eltype(x0),size(x0)[1],Imax) #contains the bi-orthogonal vectors v_j
    W = zeros(eltype(x0),size(x0)[1],Imax) #contains the bi-orthogonal vectors w_j
+
+   Q = eye(Imax) #stores v_j* B v_k for selective orthogonalization
+
+   if do_so
+      for k in 1:Imax-1
+         Q[k,k+1] = eps()
+         Q[k+1,k] = eps()
+      end
+   end
 
    #Initialization
    i=1
@@ -194,6 +203,30 @@ function eig_lanczos(A,x0; m=3, B=Id, tol=1e-5, Imax=min(1000,size(x0)[1]))
       @test off_diag_T[i-1] > 1e-14
       V[:,i]=q/off_diag_T[i-1]
       W[:,i] = r/off_diag_T[i-1]
+
+      if do_so && i>2
+         omega_temp = off_diag_T[1]*Q[i-1,2] + (diag_T[1]-diag_T[i-1])*Q[i-1,1] - off_diag_T[i-2]*Q[i-2,1]
+         Q[i,1] = (omega_temp + 2sign(omega_temp)*norm_A*eps())/off_diag_T[1]
+         for k in 2:i-1
+            omega_temp = off_diag_T[k]*Q[i-1,k+1] + (diag_T[k]-diag_T[i-1])*Q[i-1,k] + off_diag_T[k-1]*Q[i-1,k-1] - off_diag_T[i-2]*Q[i-2,k]
+            Q[i,k] = (omega_temp + 2sign(omega_temp)*norm_A*eps())/off_diag_T[i-1]
+         end
+         #re-orthogonalisation condition
+         if norm(Q[i,1:i-1],Inf) > sqrt(eps())
+            println("Iteration : $(i), Off-set : $(norm(Q[i,1:i-1],Inf))")
+            for k in 1:i-2
+               Q[i-1,k] = eps() #re-orthogonalize => reset values to eps()
+               Q[i,k] = eps()
+               V[:,i-1] -= (W[:,k]'*V[:,i-1])*V[:,k]
+               V[:,i] -= (W[:,k]'*V[:,i])*V[:,k]
+            end
+            W[:,i-1] = B(V[:,i-1])
+            Q[i,i-1] = eps()
+            V[:,i] -= (W[:,i-1]'*V[:,i])*V[:,i-1]
+            W[:,i] = B(V[:,i])
+         end
+      end
+
       r_temp = A(V[:,i])
       a = r_temp'*V[:,i]
       @test abs(imag(a)) < 1e-10
@@ -209,7 +242,6 @@ function eig_lanczos(A,x0; m=3, B=Id, tol=1e-5, Imax=min(1000,size(x0)[1]))
       #q = B\r
    end
    return (V[:,1:i]*Vp)[:,1:min(i,m)], vp[1:min(i,m)], resid
-#   return (Vp'*V[1:i,:])'[:,1:min(i,m)], vp[1:min(i,m)], resid
 end
 
 end
