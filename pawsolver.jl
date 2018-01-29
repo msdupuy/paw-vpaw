@@ -5,13 +5,13 @@ using PyPlot
 using eigensolvers
 using paw
 using Polynomials
-using pwsolver
+using pw_coulomb
 using vpawsolver
 using GSL
 
 type pawfunc
    rc :: Float64 #cut-off radius
-   p :: pwsolver.params
+   p :: pw_coulomb.params
    X :: Array{Float64, 2} #positions of the atoms
    Nat :: Integer #number of atoms
    Npaw :: Array{Int64,1} #number of PAW functions
@@ -19,7 +19,7 @@ type pawfunc
    P #projectors
    DH #Array of matrices <phi - \tilde\phi | H  |phi - \tilde\phi >
    DS #Array of matrices <phi - \tilde\phi | phi - \tilde\phi >
-   function pawfunc(rc, X::Array{Float64,2}, p::pwsolver.params, Npaw:: Array{Int64,1}, Z; proj=vpawsolver.proj_fft, args...)
+   function pawfunc(rc, X::Array{Float64,2}, p::pw_coulomb.params, Npaw:: Array{Int64,1}, Z; proj=vpawsolver.proj_fft, args...)
       fpaw = new(rc, p, X, size(X)[2], Npaw, paw.Npawtot(Npaw), nothing)
       Npawtot = paw.Npawtot(Npaw)
       coefpaw = paw.pawcoef(Z, rc, Npaw; args...)
@@ -29,7 +29,7 @@ type pawfunc
       for iat in 1:fpaw.Nat
          fpaw.DS[:,:,iat] = S_ij(rc, Z, coefpaw.tdR, Npaw)
          fpaw.DH[:,:,iat] = D_ij(rc, X, coefpaw.tdR, iat, coefpaw.coef_TM, Npaw, Z)[1]
-         fpaw.P[:,:,:,:,iat] = proj(rc, X[:,iat], p::pwsolver.params, coefpaw::paw.pawcoef)
+         fpaw.P[:,:,:,:,iat] = proj(rc, X[:,iat], p::pw_coulomb.params, coefpaw::paw.pawcoef)
       end
       return fpaw
    end
@@ -128,7 +128,7 @@ end
 tdH_paw computes \tilde H \tilde\psi
 """
 
-function tdH_paw(fpaw::pawfunc, p::pwsolver.params, psi)
+function tdH_paw(fpaw::pawfunc, p::pw_coulomb.params, psi)
    L = p.L1*p.L2*p.L3
    Ppsi = zeros(Complex128, (fpaw.Npawtot, fpaw.Nat))
    for iat in 1:fpaw.Nat
@@ -136,7 +136,7 @@ function tdH_paw(fpaw::pawfunc, p::pwsolver.params, psi)
          Ppsi[ipaw, iat] = 1/p.Ntot^2*L*vecdot(fpaw.P[:,:,:,ipaw,iat], psi)
       end
    end
-   tdpsi = pwsolver.ham(p, psi)
+   tdpsi = pw_coulomb.ham(p, psi)
    for iat in 1:fpaw.Nat
       for ipaw in 1:fpaw.Npawtot
          tdpsi +=  (fpaw.DH[:,:,iat]*Ppsi[:,iat])[ipaw]*fpaw.P[:,:,:,ipaw,iat]
@@ -149,7 +149,7 @@ end
 tdH_paw computes \tilde S \tilde\psi
 """
 
-function tdS_paw(fpaw::pawfunc, p::pwsolver.params, psi)
+function tdS_paw(fpaw::pawfunc, p::pw_coulomb.params, psi)
    L = p.L1*p.L2*p.L3
    Ppsi = zeros(Complex128, (fpaw.Npawtot, fpaw.Nat))
    for iat in 1:fpaw.Nat
@@ -166,20 +166,21 @@ function tdS_paw(fpaw::pawfunc, p::pwsolver.params, psi)
    return tdpsi
 end
 
-function energy_paw(fpaw::pawfunc, p::pwsolver.params, seed)
+function energy_paw(fpaw::pawfunc, p::pw_coulomb.params, seed)
    H_1var(psi) = tdH_paw(fpaw, p, reshape(psi, p.size_psi))[:]
    S_1var(psi) = tdS_paw(fpaw, p, reshape(psi, p.size_psi))[:]
    function P(psi)
        meankin = sum(p.kin[i]*abs2(psi[i]) for i = 1:p.Ntot) / (vecnorm(psi)^2)
        return psi ./ (0.1*meankin .+ p.kin[:]) # this should be tuned but works more or less
     end
-   return eigensolvers.eig_pcg(H_1var, seed[:];P =P, B=S_1var, tol=1e-3, maxiter = 1000)
+   return eigensolvers.eig_lanczos(H_1var, seed[:], B=S_1var, m=3, Imax = 250, do_so=true, norm_A = 6pi^2*p.N1)
+   #return eigensolvers.eig_pcg(H_1var, seed[:];P =P, B=S_1var, tol=1e-3, maxiter = 1000)
 end
 
 function test_fft_H(N,L,rc,Npaw,Z)
    coef_TM = paw.coef_TM(rc, 1, 0, Z, 1e-8)[1]
    V(x,y,z) = paw.V_scr(norm([x,y,z]-[L/2,L/2,L/2]), 1, 0, rc, coef_TM,Z)
-   p = pwsolver.params(N,L,V)
+   p = pw_coulomb.params(N,L,V)
    X = zeros(3,1)
    X[:,1] = [L/2, L/2, L/2]
    fpaw = pawfunc(rc, X, p, Npaw, Z)
@@ -189,8 +190,8 @@ end
 
 function test_num_H(N,L,rc,Npaw,Z;args...)
    coef_TM = paw.coef_TM(rc, 1, 0, Z, 1e-8)[1]
-   V(x,y,z) = paw.V_scr(norm([x,y,z]-[L/2,L/2,L/2]), 1, 0, rc, coef_TM,Z)
-   p = pwsolver.params(N,L,V)
+   V(r) = paw.V_scr(r, 1, 0, rc, coef_TM, Z)
+   p = pw_coulomb.params(N,L,X,Z,V)
    X = zeros(3,1)
    X[:,1] = [L/2, L/2, L/2]
    fpaw = pawfunc(rc, X, p, Npaw, Z; proj=vpawsolver.proj_num, args...)
@@ -206,7 +207,7 @@ function test_fft_H2(N,L,rc,Npaw,R,Z)
    X[:,2] = X2
    coef_TM = paw.coef_TM(rc, 1, 0, Z, 1e-8)[1]
    V(x,y,z) = paw.V_scr(norm([x-(L-R)/2,y-L/2,z-L/2]), 1, 0, rc, coef_TM, Z) + paw.V_scr(norm([x-(L+R)/2,y-L/2,z-L/2]), 1, 0, rc, coef_TM, Z)
-   p = pwsolver.params(N,L,V)
+   p = pw_coulomb.params(N,L,V)
    fpaw = pawfunc(rc, X, p, Npaw, Z)
    psi, E, res = energy_paw(fpaw, p, vpawsolver.guess_H2(rc,X1,X2,p))
    return psi, E
@@ -219,8 +220,8 @@ function test_num_H2(N,L,rc,Npaw,R,Z;args...)
    X[:,1] = X1
    X[:,2] = X2
    coef_TM = paw.coef_TM(rc, 1, 0, Z, 1e-8)[1]
-   V(x,y,z) = paw.V_scr(norm([x-(L-R)/2,y-L/2,z-L/2]), 1, 0, rc, coef_TM, Z) + paw.V_scr(norm([x-(L+R)/2,y-L/2,z-L/2]), 1, 0, rc, coef_TM, Z)
-   p = pwsolver.params(N,L,V)
+   V(r) = paw.V_scr(r, 1, 0, rc, coef_TM, Z)
+   p = pw_coulomb.params(N,L,X,Z,V)
    fpaw = pawfunc(rc, X, p, Npaw, Z; proj=vpawsolver.proj_num, args...)
    psi, E, res = energy_paw(fpaw, p, vpawsolver.guess_H2(rc,X1,X2,p,Z))
    return psi, E
