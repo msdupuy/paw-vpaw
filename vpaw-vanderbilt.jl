@@ -344,11 +344,11 @@ type pawcoef
    Z :: Float64 #atomic charge
    rc :: Float64 #cutoff radius
    Npaw :: Array{Integer,1}
-   tdR  #\tilde R_nl coefficients
-   proj #projectors coefficients
-   coef_TM
+   tdR  :: Array{Float64,3} #\tilde R_nl coefficients
+   proj :: Array{Polynomials.Poly{Float64},2} #projectors coefficients
+   coef_TM :: Array{Float64,1}
    function pawcoef(Z, rc :: Float64, Npaw :: Array{Int64,1}; GS = GS_VdB, proj_gen = coef_rad_proj)
-      coefpaw = new(Z, rc, Npaw, nothing)
+      coefpaw = new(Z, rc, Npaw)
       coefpaw.tdR = zeros(5,max(Npaw...),endof(Npaw))
       coefpaw.proj = Array{Polynomials.Poly{Float64}}(max(Npaw...),endof(Npaw))
       coef_PP = zeros(7,endof(Npaw))
