@@ -418,7 +418,8 @@ end
 function test_num_H(N,L,rc,Npaw,Z; args...)
    X = zeros(3,1)
    X[:,1] = [L/2,L/2,L/2]
-   p = pw_coulomb.params(N,L,X,Z)
+   V(r) = -Z/r
+   p = pw_coulomb.params(N,L,X,Z,V)
    fpaw = pawfunc(rc, X, p, Npaw, Z; proj=proj_num, diff_phi=diff_phi_num, Hdiff_phi=Hdiff_phi_num, args...)
    psi, E, res = energy_vpaw(fpaw, p, tdphi_test(N,L,[L/2,L/2,L/2], p, rc,Z))
    return psi, E
@@ -458,8 +459,8 @@ function test_num_H2(N,L,rc,Npaw,R,Z;args...)
    X = zeros(3,2)
    X[:,1] = X1
    X[:,2] = X2
-   V(x,y,z) = -Z/norm([x-(L-R)/2,y-L/2,z-L/2])-Z/norm([x-(L+R)/2,y-L/2,z-L/2])
-   p = pw_coulomb.params(N,L,X,Z)
+   V(r) = -Z/r
+   p = pw_coulomb.params(N,L,X,Z,V)
    fpaw = pawfunc(rc, X, p, Npaw, Z; proj=proj_num, diff_phi=diff_phi_num, Hdiff_phi=Hdiff_phi_num, args...)
    psi, E, res = energy_vpaw(fpaw, p, guess_H2(rc,X1,X2,p, Z))
    return psi, E
