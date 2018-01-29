@@ -27,18 +27,18 @@ Type params contain all info for PW calculations
       kin :: Array{Float64,3} #kinetic operator in Fourier
       fft_plan :: Base.DFT.FFTW.cFFTWPlan{Complex{Float64},-1,false,3} #typeof(plan_fft(zeros(Complex128,(2,2,2))))
 
-      function params(N,L,X,Z)
-         function V(x,y,z)
-            out = 0.
-            for i in 1:size(X,2)
-               out -= Z/norm([x,y,z]-X[:,i])
-            end
-            return out
-         end
+      function params(N,L,X,Z,V)
+         # function V(x,y,z)
+         #    out = 0.
+         #    for i in 1:size(X,2)
+         #       out -= Z/norm([x,y,z]-X[:,i])
+         #    end
+         #    return out
+         # end
          p = new(N,N,N,(2N+1)^3,(2N+1,2N+1,2N+1),L,L,L,V)
          p.V_grid = zeros(Complex128,(4N+1,4N+1,4N+1)) #larger grid for convolution
          for i in 1:size(X,2)
-            p.V_grid += Z*coulomb(p,X[:,i])
+            p.V_grid += coulomb(p,X[:,i],V)
          end
          p.kin = zeros(2N+1,2N+1,2N+1)
          for i3 in 1:(2p.N3+1)
@@ -59,10 +59,11 @@ Type params contain all info for PW calculations
    end
 
    #Coulomb potential separated into two parts : radial + regular, computed on a grid twice larger
-   function coulomb(p :: pw_coulomb.params,X)
+   #V : radial potential
+   function coulomb(p :: pw_coulomb.params,X,V)
       mult = multiplier(2p.N1)
       function chi(r)
-         if r > 1
+         if r > 1.
             return 0.
          else
             return exp(-r^6/(1-r^6))
@@ -75,20 +76,23 @@ Type params contain all info for PW calculations
          for i2 in 1:i3
             for i1 in 1:i2
                k_vec = fft_mode.([i1,i2,i3],[2p.N1,2p.N2,2p.N3])
-               k = norm(k_vec)
+               k = norm(k_vec) :: Float64
+               let k=k #otherwise type not inferred...
                integrand(r) = chi(r)*sin(2pi*k*r/p.L1)
-               if k==0.
-                  V_rad[i1,i2,i3] = -4pi/(p.L1^3)*QuadGK.quadgk(r -> chi(r)*r,0,1)[1]
-               else
-                  V_rad[i1,i2,i3] = -2/(k*p.L1^2)*QuadGK.quadgk(r -> chi(r)*sin(2pi*k*r/p.L1), 0, 1)[1]
-                  #remplissage du reste de la matrice
-                  P = unique(permutations([i1,i2,i3]))
-                  for j in 2:endof(P)
-                     k_vec = fft_mode.(P[j],[2p.N1,2p.N1,2p.N1])
-                     V_rad[P[j]...] = exp(-2*im*pi*dot(k_vec,X)/p.L1)*V_rad[i1,i2,i3]
+                  Base.Test.@inferred integrand(1.0)
+                  if k==0.
+                     V_rad[i1,i2,i3] = 4pi/(p.L1^3)*QuadGK.quadgk(r -> V(r)*chi(r)*r^2,0,1)[1]
+                  else
+                     V_rad[i1,i2,i3] = 2/(k*p.L1^2)*QuadGK.quadgk(r -> V(r)*chi(r)*sin(2pi*k*r/p.L1)*r, 0, 1, abstol=1e-8, order=10)[1]
+                     #remplissage du reste de la matrice
+                     P = unique(permutations([i1,i2,i3]))
+                     for j in 2:endof(P)
+                        k_vec = fft_mode.(P[j],[2p.N1,2p.N1,2p.N1])
+                        V_rad[P[j]...] = exp(-2*im*pi*dot(k_vec,X)/p.L1)*V_rad[i1,i2,i3]
+                     end
+                     k_vec = fft_mode.([i1,i2,i3],[2p.N1,2p.N1,2p.N1])
+                     V_rad[i1,i2,i3] = exp(-2*im*pi*dot(k_vec,X)/p.L1)*V_rad[i1,i2,i3]
                   end
-                  k_vec = fft_mode.([i1,i2,i3],[2p.N1,2p.N1,2p.N1])
-                  V_rad[i1,i2,i3] = exp(-2*im*pi*dot(k_vec,X)/p.L1)*V_rad[i1,i2,i3]
                end
             end
          end
@@ -98,7 +102,7 @@ Type params contain all info for PW calculations
          for i2 in 1:4mult*p.N2+1
             for i1 in 1:4mult*p.N1+1
                r = norm(coords(p,i1,i2,i3,2mult) - X)
-               V_fft[i1,i2,i3] =  -(1-chi(r))/r
+               V_fft[i1,i2,i3] =  (1-chi(r))*V(r)
             end
          end
       end
@@ -222,7 +226,8 @@ end
 function H_test(N,L,Z)
    X = zeros(3,1)
    X[:,1] = [L/2,L/2,L/2]
-   p = pw_coulomb.params(N,L,X,Z)
+   V(r) = 1./r
+   p = pw_coulomb.params(N,L,X,Z,V)
    psi, E, res = pw_coulomb.energy(p,phi_H(p,[L/2,L/2,L/2],Z),
    tol=1e-4, maxiter=400)
    return psi,E
@@ -241,7 +246,8 @@ function H2_test(N,L,R,Z)
    X = zeros(3,2)
    X[:,1] = X1
    X[:,2] = X2
-   p = pw_coulomb.params(N,L,X,Z)
+   V(r) = -Z/r
+   p = pw_coulomb.params(N,L,X,Z,V)
    psi, E, res = pw_coulomb.energy(p,phi_H2(p,X1,X2,Z),
    tol=1e-10, maxiter=400)
    return psi, E
