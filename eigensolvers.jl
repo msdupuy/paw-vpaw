@@ -1,7 +1,7 @@
 module eigensolvers
-using Base.Test
-import Base.dot
-using PyPlot
+using Test
+using LinearAlgebra
+using Plots
 
 # A,B and P must implement *
 # A must be hermitian, A implemented as a function (not a matrix)
@@ -20,9 +20,9 @@ function eig_pcg(A,x0;B=Id,P=Id,tol=1e-16,maxiter=400,do_cg=true)
     Bx = Bx0 / sqrt(real(dot(x0,Bx0)))
     @test isapprox(dot(x,Bx),1)
     lambda = 0
-    x_prev = zeros(x0)
-    Ax_prev = zeros(x0)
-    Bx_prev = zeros(x0)
+    x_prev = zeros(eltype(x0),size(x0)[1])
+    Ax_prev = zeros(eltype(x0),size(x0)[1])
+    Bx_prev = zeros(eltype(x0),size(x0)[1])
     res_history = zeros(maxiter)
 
     for i=1:maxiter
@@ -90,17 +90,15 @@ function rayleigh_ritz(X, AX, BX)
 
     #TOFIX this is still not good enough, and accuracy saturates at 1e-7...
     #A x = lambda B x. Assume B = V S V^* = (V S^1/2) (V S^1/2)^*, then the problem is equivalent to S^-1/2 V^* A V S^-1/2 y = lambda y, with y = S^1/2 V^* x. Here we also allow dropping columns of B in case of ill-conditioning
-    S,V = eig(overlap)
-    n = count(x -> (x < 1e-16),S)
-    V = V[:,n+1:end]
-    S = diagm(S[n+1:end]) # could be optimized
+    F = eigen(overlap)
+    n = count(x -> (x < 1e-14),F.values)
+    V = F.vectors[:,n+1:end]
+    S = diagm(0=>F.values[n+1:end]) # could be optimized
     ham_reduced = S^(-1/2)*V'*hamiltonian*V*S^(-1/2)
     ham_reduced = (ham_reduced + ham_reduced')/2
-    D,U = eig(ham_reduced)
-    c = U[:,1]
+    c = eigvecs(ham_reduced)[:,1]
     @test isapprox(norm(c),1)
     c = V*(S^(-1/2)*c)
-
 
     @test isapprox(dot(c,overlap*c),1)
     c = c / sqrt(real(dot(c,overlap*c))) # ensure normalization, normally not needed if eigensolver recognizes ham and ovl are hermitian
@@ -108,21 +106,17 @@ function rayleigh_ritz(X, AX, BX)
 end
 
 function test_pcg()
-    srand(0)
-    n = 500
+    seed!(0)
+    n = 10
     A = randn(n,n) + im*randn(n,n)
     A = (A+A')/2 # force hermitian
     B = randn(n,n) + im*randn(n,n)
     B = (B'*B) + I # force HDP
-    x0 = ones(Complex128,n)
-    x,lambda, res_history = eig_pcg(x->A*x,x0,B=(x->B*x), maxiter=100)
-    lambda_iter, x_iter, nconv, niter, nmult, resid = eigs(A,B;which=:SR,v0=x0,maxiter=100)
-    println(lambda,eig(A,B)[1][1])
-    println(vecnorm(x_iter[:,1]-x))
-    println(abs(lambda-lambda_iter[1]))
-    semilogy(res_history)
-    @test isapprox(lambda_iter[1],eig(A,B)[1][1], rtol=1e-6)
-    @test isapprox(lambda,eig(A,B)[1][1],rtol=1e-6)
+    x0 = randn(n)
+    x,lambda, res_history = eig_pcg(x->A*x,x0,B=(x->B*x))
+    println(lambda,eigvals(A,B)[1])
+    @test isapprox(lambda,eigvals(A,B)[1],rtol=1e-6)
+    plot(res_history, yaxis=:log10)
 end
 
 
@@ -171,7 +165,7 @@ function eig_lanczos(A,x0; m=3, B=Id, tol=1e-5, Imax=min(1000,size(x0)[1]), norm
    V = zeros(eltype(x0),size(x0)[1],Imax) #contains the bi-orthogonal vectors v_j
    W = zeros(eltype(x0),size(x0)[1],Imax) #contains the bi-orthogonal vectors w_j
 
-   Q = eye(Imax) #stores v_j* B v_k for selective orthogonalization
+   Q = Matrix{eltype(x0)}(I,Imax,Imax) #stores v_j* B v_k for selective orthogonalization
 
    if do_so
       for k in 1:Imax-1
@@ -232,7 +226,7 @@ function eig_lanczos(A,x0; m=3, B=Id, tol=1e-5, Imax=min(1000,size(x0)[1]), norm
       @test abs(imag(a)) < 1e-10
       diag_T[i] = real(a)
       r = r_temp - diag_T[i]*W[:,i] - off_diag_T[i-1]*W[:,i-1]
-      vp, Vp = eig(SymTridiagonal(diag_T[1:i],off_diag_T[1:i-1]))
+      vp, Vp = eigen(SymTridiagonal(diag_T[1:i],off_diag_T[1:i-1]))
       for k in 1:min(i,m)
          resid[i] += off_diag_T[i-1]*abs(Vp[i,k])/m
       end
