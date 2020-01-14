@@ -147,7 +147,7 @@ function int_num(rc, X, f, p::pw_coulomb.params, Npaw; tol = 1e-10, order = 5)
                   if l>1
                      P[i1,i2,i3,ipaw] = complex(0.)
                   else
-                     P[i1,i2,i3,ipaw] = p.Ntot/(p.L1*p.L2*p.L3)*4pi*paw.Y_lm(1,0,0,0,0)*QuadGK.quadgk(r -> r*f(r,l,n), 0, rc, abstol=tol, order=order)[1]
+                     P[i1,i2,i3,ipaw] = p.Ntot/(p.L1*p.L2*p.L3)*4pi*paw.Y_lm(1.,0.,0.,0,0)*QuadGK.quadgk(r -> r*f(r,l,n), 0, rc, abstol=tol, order=order)[1]
                   end
                else
                   aux(r) = aux_k(r,k,ipaw,l-1,n)
@@ -388,8 +388,8 @@ function energy_vpaw(fpaw::pawfunc, p::pw_coulomb.params, seed)
        meankin = sum(p.kin[i]*abs2(psi[i]) for i = 1:p.Ntot) / (vecnorm(psi)^2)
        return psi ./ (0.1*meankin .+ p.kin[:]) # this should be tuned but works more or less
    end
-   return eigensolvers.eig_lanczos(H_1var, seed[:], B=S_1var, m=5, Imax = 400, do_so=true, norm_A = 6pi^2*p.N1)
-#   return eigensolvers.eig_pcg(H_1var, seed[:],P=P, B=S_1var, tol=1e-10, maxiter = 1000, do_cg = false)
+#   return eigensolvers.eig_lanczos(H_1var, seed[:], B=S_1var, m=5, Imax = 400, do_so=true, norm_A = 6pi^2*p.N1)
+   return eigensolvers.eig_pcg(H_1var, seed[:],P=P, B=S_1var, tol=1e-5, maxiter = 400)
 end
 
 function tdphi_test(N,L,X,p::pw_coulomb.params,rc, Z)
@@ -514,6 +514,15 @@ function ortho_test(rc,N,L,Npaw,Z,mult;proj=vpawsolver.proj_num)
       end
    end
    return out
+end
+
+#return \psi = (I+T) \tilde\psi : TO BE WRITTEN
+function tdpsi_to_psi(tdpsi,rc,N,L,Npaw,Z,mult;proj=vpawsolver.proj_num) #tdpsi in reciprocal space
+   coefpaw = paw.pawcoef(Z, rc, Npaw)
+   X = zeros(3,1)
+   X[:,1] = [0.5L,0.5L,0.5L]
+   p = pw_coulomb.params(N,L,X,Z)
+   P = proj(rc,X[:,1],p,coefpaw)
 end
 
 end
