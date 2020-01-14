@@ -188,8 +188,8 @@ Type params contain all info for PW calculations
          meankin = sum(p.kin[i]*abs2(psi[i]) for i = 1:p.Ntot) / (vecnorm(psi)^2)
          return psi ./ (.2*meankin .+ p.kin[:]) # this should be tuned but works more or less
       end
-      return eigensolvers.eig_lanczos(H, psi0[:], m=5, Imax = 1000)
-#      return eigensolvers.eig_pcg(H, psi0[:], P=P; args...)
+#      return eigensolvers.eig_lanczos(H, psi0[:], m=5, Imax = 1000)
+      return eigensolvers.eig_pcg(H, psi0[:], P=P; args...)
    end
 
 
