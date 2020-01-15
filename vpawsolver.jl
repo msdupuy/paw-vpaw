@@ -1,14 +1,20 @@
 module vpawsolver
-using Base.Test
+import ..eigensolvers
+import ..paw
+import ..pw_coulomb
+
+using FFTW
+using Test
 using QuadGK
-using PyPlot
-using eigensolvers
-using paw
+using Plots
 using Polynomials
-using pw_coulomb
+using LinearAlgebra
 using Combinatorics
 using Cubature
 using GSL
+using .eigensolvers
+using .paw
+using .pw_coulomb
 
 """
 td : means tilde
@@ -70,8 +76,8 @@ function fft_paw(rc, X, f, p::pw_coulomb.params, Npaw; mult = pw_coulomb.multipl
    @test (X[2]-rc < p.L2) & (X[2]-rc > 0)
    @test (X[3]-rc < p.L3) & (X[3]-rc > 0)
    Npawtot = paw.Npawtot(Npaw)
-   P = zeros(Complex128, (2p.N1*mult+1, 2p.N2*mult+1, 2p.N3*mult+1, Npawtot))
-   Pout = zeros(Complex128, (p.size_psi..., Npawtot))
+   P = zeros(ComplexF64, (2p.N1*mult+1, 2p.N2*mult+1, 2p.N3*mult+1, Npawtot))
+   Pout = zeros(ComplexF64, (p.size_psi..., Npawtot))
    FFTW.set_num_threads(4)
    for ipaw in 1:(Npawtot)
       l,n,m = int_to_nl(ipaw,Npaw)
@@ -98,7 +104,7 @@ function proj_fft(rc, X, p::pw_coulomb.params, coefpaw::paw.pawcoef; mult = pw_c
 end
 
 """
-diff_phi_fft : returns the Fourier coefficients of \phi-\tilde\phi for all the atoms
+diff_phi_fft : returns the Fourier coefficients of phi-tilde phi for all the atoms
 """
 function diff_phi_fft(rc, X, p::pw_coulomb.params, coefpaw::paw.pawcoef; mult = pw_coulomb.multiplier(p.N1))
    function f(r,l,n)
@@ -108,7 +114,7 @@ function diff_phi_fft(rc, X, p::pw_coulomb.params, coefpaw::paw.pawcoef; mult = 
 end
 
 """
-Hdiff_phi_fft : returns the Fourier coefficients of H(\phi-\tilde\phi) for all the atoms
+Hdiff_phi_fft : returns the Fourier coefficients of H(phi-tilde phi) for all the atoms
 """
 function Hdiff_phi_fft(rc, X, p::pw_coulomb.params, coefpaw::paw.pawcoef, N, Npaw; mult= pw_coulomb.multiplier(p.N1)) #n : atom site
    V(x,y,z) = -coefpaw.Z*sum(1/norm([x,y,z] - X[:,j]) for j in 1:(size(X)[2])) #potential
@@ -131,7 +137,7 @@ int_num works ONLY for l=0 : gives the FFT of f(r)/r*Y_lm(Θ,ϕ)
 """
 function int_num(rc, X, f, p::pw_coulomb.params, Npaw; tol = 1e-10, order = 5)
    Npawtot = paw.Npawtot(Npaw)
-   P = zeros(Complex128, (p.size_psi..., Npawtot))
+   P = zeros(ComplexF64, (p.size_psi..., Npawtot))
    function aux_k(r,k,ipaw,l,n) #K : Fourier mode
       out = r*f(r,l+1,n)*sf_bessel_jl(l,2pi*k*r/p.L1)
       return out
@@ -147,15 +153,15 @@ function int_num(rc, X, f, p::pw_coulomb.params, Npaw; tol = 1e-10, order = 5)
                   if l>1
                      P[i1,i2,i3,ipaw] = complex(0.)
                   else
-                     P[i1,i2,i3,ipaw] = p.Ntot/(p.L1*p.L2*p.L3)*4pi*paw.Y_lm(1.,0.,0.,0,0)*QuadGK.quadgk(r -> r*f(r,l,n), 0, rc, abstol=tol, order=order)[1]
+                     P[i1,i2,i3,ipaw] = p.Ntot/(p.L1*p.L2*p.L3)*4pi*paw.Y_lm(1.,0.,0.,0,0)*QuadGK.quadgk(r -> r*f(r,l,n), 0, rc, atol=tol, order=order)[1]
                   end
                else
                   aux(r) = aux_k(r,k,ipaw,l-1,n)
-                  P[i1,i2,i3,ipaw] = p.Ntot/(p.L1*p.L2*p.L3)*4pi*im^(l-1)*QuadGK.quadgk(aux, 0, rc, abstol=tol,reltol=tol,order=order)[1]
+                  P[i1,i2,i3,ipaw] = p.Ntot/(p.L1*p.L2*p.L3)*4pi*im^(l-1)*QuadGK.quadgk(aux, 0, rc, atol=tol,rtol=tol,order=order)[1]
                   L = unique(permutations([i1,i2,i3]))
-                  for j in 2:endof(L)
-                     k_vec = fft_mode.(L[j],[p.N1,p.N2,p.N3])
-                     P[L[j]...,ipaw] = exp(-2*im*pi*dot(k_vec,X)/p.L1)*paw.Y_lm(-k_vec...,l-1,m)*P[i1,i2,i3,ipaw]
+                  for Lj in L[2:end]
+                     k_vec = fft_mode.(Lj,[p.N1,p.N2,p.N3])
+                     P[Lj...,ipaw] = exp(-2*im*pi*dot(k_vec,X)/p.L1)*paw.Y_lm(-k_vec...,l-1,m)*P[i1,i2,i3,ipaw]
                   end
                   k_vec = fft_mode.([i1,i2,i3],[p.N1,p.N2,p.N3])
                   P[i1,i2,i3,ipaw] = exp(-2*im*pi*dot(k_vec,X)/p.L1)*paw.Y_lm(-k_vec...,l-1,m)*P[i1,i2,i3,ipaw]
@@ -190,14 +196,14 @@ function diff_phi_num(rc, X, p::pw_coulomb.params, coefpaw::paw.pawcoef; tol = 1
 end
 
 """
-Hrad_diff_phi_num : computes  the Fourier coefficient of the radial part of H(\phi-\tilde\phi) (direct integration)
+Hrad_diff_phi_num : computes  the Fourier coefficient of the radial part of H( phi- tilde phi) (direct integration)
 """
 function Hrad_diff_phi_num(rc, X, p::pw_coulomb.params, coefpaw::paw.pawcoef, Npaw; tol = 1e-10, order = 5)
    Hrad_Rnl(r,n,l) = paw.E_n(n,coefpaw.Z)*paw.R_nl(r, n, l, coefpaw.Z) #(-0.5Δ - Z/r) R_nl
    tdR(n,l) = Poly(coefpaw.tdR[:,n-l,l+1])(Poly([0,0,1]))
    Hrad_tdRnl(r,n,l,deriv) = paw.C_nl(n,l,coefpaw.Z)*( 0.5*r^(l+1)*polyval(deriv[2,n-l,l+1],r) + (l+1)*r^l*polyval(deriv[1,n-l,l+1],r)) + coefpaw.Z*paw.tilde_R_nl(r,rc,n,l,coefpaw.Z,coefpaw.tdR[:,n-l,l+1])/r
    #(0.5Δ + Z/r) \tilde R_nl, take into account radial laplacian
-   der_tdR = Array{Polynomials.Poly{Float64}}(2,max(Npaw...),endof(Npaw))
+   der_tdR = Array{Polynomials.Poly{Float64},3}(undef,2,max(Npaw...),length(Npaw))
    for i in 1:2
       for lpaw in eachindex(Npaw)
          for npaw in 1:Npaw[lpaw]
@@ -217,11 +223,11 @@ function Hrad_diff_phi_num(rc, X, p::pw_coulomb.params, coefpaw::paw.pawcoef, Np
 end
 
 """
-Hdiff_phi_pot : computes the Fourier coefficient of the radial part of H(\phi-\tilde\phi) (via a FFT)
+Hdiff_phi_pot : computes the Fourier coefficient of the radial part of H(phi-tilde phi) (via a FFT)
 """
 function Hdiff_phi_pot(rc, X, p::pw_coulomb.params, coefpaw::paw.pawcoef, N ; mult=5)
    Y = X[:,1:end .!=N]
-   pot(x,y,z) = coefpaw.Z*sum(-1/norm([x,y,z] - Y[:,i3]) for i3 in 1:(endof(X[1,:])-1))
+   pot(x,y,z) = coefpaw.Z*sum(-1/norm([x,y,z] - Y[:,i3]) for i3 in 1:(length(X[1,:])-1))
    function rad(r,l,n)
       if r < rc
          return paw.C_nl(n,l,coefpaw.Z)*r^l*(GSL.sf_laguerre_n(n-l-1, 2l+1, 2coefpaw.Z*r/n)*exp(-coefpaw.Z*r/n) - polyval(Poly(coefpaw.tdR[:,n-l,l+1]), r^2))
@@ -247,16 +253,16 @@ function D_ij(rc, X, coef_PAW, N, Npaw, Z) #N : atom site (working)
    Rnl_diff(r, rc, l1, l2, coef_PAW, j, k) = (paw.R_nl(r, l1+j, l1, Z) - paw.tilde_R_nl(r, rc, l1+j, l1, Z, coef_PAW[:,j,l1+1]))*(paw.R_nl(r, l2+k, l2, Z) - paw.tilde_R_nl(r, rc, l2+k, l2, Z, coef_PAW[:,k,l2+1]))
    DRnl_diff(r, rc, l1, l2, coef_PAW, j, k) = paw.Ddiff(r, rc, l1+j, coef_PAW[:,j,l1+1], l1, Z)*paw.Ddiff(r, rc, l2+k, coef_PAW[:,k,l2+1], l2, Z)
    Npawtot = paw.Npawtot(Npaw)
-   D = zeros(Complex128,(Npawtot,Npawtot))
-   err = zeros(Complex128,(Npawtot,Npawtot))
+   D = zeros(ComplexF64,(Npawtot,Npawtot))
+   err = zeros(ComplexF64,(Npawtot,Npawtot))
    ind = 0
    for lpaw in eachindex(Npaw)
       l = lpaw -1
       for m in 1:(2lpaw-1)
          for j in 1:Npaw[lpaw]
             for k in 1:Npaw[lpaw]
-               kin = QuadGK.quadgk(r -> DRnl_diff(r, rc, l, l, coef_PAW, j, k) + l*(l+1)/r^2*Rnl_diff(r, rc, l, l, coef_PAW, j, k), 0, rc, reltol=1e-10)[1]
-               pot1 = QuadGK.quadgk(r -> Z*Rnl_diff(r, rc, l, l, coef_PAW, j, k)/r, 0, rc, reltol=1e-10)[1]
+               kin = QuadGK.quadgk(r -> DRnl_diff(r, rc, l, l, coef_PAW, j, k) + l*(l+1)/r^2*Rnl_diff(r, rc, l, l, coef_PAW, j, k), 0, rc, rtol=1e-10)[1]
+               pot1 = QuadGK.quadgk(r -> Z*Rnl_diff(r, rc, l, l, coef_PAW, j, k)/r, 0, rc, rtol=1e-10)[1]
                D[j+ind,k+ind] = 0.5*kin - pot1
             end
          end
@@ -267,7 +273,7 @@ function D_ij(rc, X, coef_PAW, N, Npaw, Z) #N : atom site (working)
       return D, err
    else
       Y = X[:,1:end .!=N]
-      pot(x,y,z) = Z*sum(-1/norm([x,y,z] + X[:,N] - Y[:,i3]) for i3 in 1:(endof(X[1,:])-1))
+      pot(x,y,z) = Z*sum(-1/norm([x,y,z] + X[:,N] - Y[:,i3]) for i3 in 1:(length(X[1,:])-1))
       function rad(r,n,l)
          if r < rc
             return paw.C_nl(n,l,Z)*r^l*(GSL.sf_laguerre_n(n-l-1, 2l+1, 2Z*r/n)*exp(-Z*r/n) - polyval(Poly(coef_PAW[:,n-l,l+1]), r^2))
@@ -302,7 +308,7 @@ function D_ij(rc, X, coef_PAW, N, Npaw, Z) #N : atom site (working)
    end
 end
 
-type pawfunc
+mutable struct pawfunc
    rc :: Float64 #cut-off radius
    p :: pw_coulomb.params
    X :: Array{Float64, 2} #positions of the atoms
@@ -318,11 +324,11 @@ type pawfunc
    function pawfunc(rc, X::Array{Float64,2}, p::pw_coulomb.params, Npaw::Array{Int64,1}, Z; proj=proj_fft, diff_phi=diff_phi_fft, Hdiff_phi=Hdiff_phi_fft, args...)
       fpaw = new(rc, p, X, size(X)[2], Npaw, paw.Npawtot(Npaw), nothing)
       Npawtot = paw.Npawtot(Npaw)
-      fpaw.DH = zeros(Complex128, (Npawtot,Npawtot,fpaw.Nat))
+      fpaw.DH = zeros(ComplexF64, (Npawtot,Npawtot,fpaw.Nat))
       fpaw.DS = zeros(Float64, (Npawtot,Npawtot,fpaw.Nat))
-      fpaw.P = zeros(Complex128, (p.size_psi..., Npawtot, fpaw.Nat))
-      fpaw.Phi = zeros(Complex128, (p.size_psi..., Npawtot, fpaw.Nat))
-      fpaw.Hphi = zeros(Complex128, (p.size_psi..., Npawtot, fpaw.Nat))
+      fpaw.P = zeros(ComplexF64, (p.size_psi..., Npawtot, fpaw.Nat))
+      fpaw.Phi = zeros(ComplexF64, (p.size_psi..., Npawtot, fpaw.Nat))
+      fpaw.Hphi = zeros(ComplexF64, (p.size_psi..., Npawtot, fpaw.Nat))
       coefpaw = paw.pawcoef(Z, rc, Npaw; args...)
       for iat in 1:fpaw.Nat
          fpaw.DH[:,:,iat] = D_ij(rc, X, coefpaw.tdR, iat, Npaw, Z)[1]
@@ -336,17 +342,17 @@ type pawfunc
 end
 
 """
-tdH_paw computes \tilde H \tilde\psi
+tdH_paw computes tilde H tilde psi
 """
 
 function tdH_paw(fpaw::pawfunc, p::pw_coulomb.params, psi)
    L = p.L1*p.L2*p.L3
-   Ppsi = zeros(Complex128, (fpaw.Npawtot, fpaw.Nat))
-   Hphi_psi = zeros(Complex128, (fpaw.Npawtot, fpaw.Nat))
+   Ppsi = zeros(ComplexF64, (fpaw.Npawtot, fpaw.Nat))
+   Hphi_psi = zeros(ComplexF64, (fpaw.Npawtot, fpaw.Nat))
    for iat in 1:fpaw.Nat
       for ipaw in 1:fpaw.Npawtot
-         Ppsi[ipaw,iat] = 1/p.Ntot^2*L*vecdot(fpaw.P[:,:,:,ipaw,iat], psi)
-         Hphi_psi[ipaw,iat] = 1/p.Ntot^2*L*vecdot(fpaw.Hphi[:,:,:,ipaw,iat], psi)
+         Ppsi[ipaw,iat] = 1/p.Ntot^2*L*dot(fpaw.P[:,:,:,ipaw,iat], psi)
+         Hphi_psi[ipaw,iat] = 1/p.Ntot^2*L*dot(fpaw.Hphi[:,:,:,ipaw,iat], psi)
       end
    end
    tdpsi = pw_coulomb.ham(p, psi)
@@ -359,17 +365,17 @@ function tdH_paw(fpaw::pawfunc, p::pw_coulomb.params, psi)
 end
 
 """
-tdH_paw computes \tilde S \tilde\psi
+tdH_paw computes tilde S tilde psi
 """
 
 function tdS_paw(fpaw::pawfunc, p::pw_coulomb.params, psi)
    L = p.L1*p.L2*p.L3
-   Ppsi = zeros(Complex128, (fpaw.Npawtot, fpaw.Nat))
-   Phi_psi = zeros(Complex128, (fpaw.Npawtot, fpaw.Nat))
+   Ppsi = zeros(ComplexF64, (fpaw.Npawtot, fpaw.Nat))
+   Phi_psi = zeros(ComplexF64, (fpaw.Npawtot, fpaw.Nat))
    for iat in 1:fpaw.Nat
       for ipaw in 1:fpaw.Npawtot
-         Ppsi[ipaw,iat] = 1/p.Ntot^2*L*vecdot(fpaw.P[:,:,:,ipaw,iat], psi)
-         Phi_psi[ipaw,iat] = 1/p.Ntot^2*L*vecdot(fpaw.Phi[:,:,:,ipaw,iat], psi)
+         Ppsi[ipaw,iat] = 1/p.Ntot^2*L*dot(fpaw.P[:,:,:,ipaw,iat], psi)
+         Phi_psi[ipaw,iat] = 1/p.Ntot^2*L*dot(fpaw.Phi[:,:,:,ipaw,iat], psi)
       end
    end
    tdpsi = psi
@@ -385,7 +391,7 @@ function energy_vpaw(fpaw::pawfunc, p::pw_coulomb.params, seed)
    H_1var(psi) = tdH_paw(fpaw, p, reshape(psi, p.size_psi))[:]
    S_1var(psi) = tdS_paw(fpaw, p, reshape(psi, p.size_psi))[:]
    function P(psi)
-       meankin = sum(p.kin[i]*abs2(psi[i]) for i = 1:p.Ntot) / (vecnorm(psi)^2)
+       meankin = sum(p.kin[i]*abs2(psi[i]) for i = 1:p.Ntot) / (norm(psi)^2)
        return psi ./ (0.1*meankin .+ p.kin[:]) # this should be tuned but works more or less
    end
 #   return eigensolvers.eig_lanczos(H_1var, seed[:], B=S_1var, m=5, Imax = 400, do_so=true, norm_A = 6pi^2*p.N1)
@@ -393,7 +399,7 @@ function energy_vpaw(fpaw::pawfunc, p::pw_coulomb.params, seed)
 end
 
 function tdphi_test(N,L,X,p::pw_coulomb.params,rc, Z)
-   tdphi = zeros(Complex128,(2*N+1,2*N+1,2*N+1))
+   tdphi = zeros(ComplexF64,(2*N+1,2*N+1,2*N+1))
    coef_tdR = paw.coef_tilde_R(rc,1,0,Z)
    for i1 in 1:(2*N+1)
       for i2 in 1:(2*N+1)
@@ -426,7 +432,7 @@ function test_num_H(N,L,rc,Npaw,Z; args...)
 end
 
 function guess_H2(rc, X1, X2, p::pw_coulomb.params, Z)
-   tdphi = zeros(Complex128,p.size_psi)
+   tdphi = zeros(ComplexF64,p.size_psi)
    coef_tdR = paw.coef_tilde_R(rc,1,0,Z)
    for i1 in 1:(2*p.N1+1)
       for i2 in 1:(2*p.N2+1)
@@ -465,21 +471,50 @@ function test_num_H2(N,L,rc,Npaw,R,Z;args...)
    psi, E, res = energy_vpaw(fpaw, p, guess_H2(rc,X1,X2,p, Z))
    return psi, E
 end
+
+function test_num_H2_cutoff(N,L,rc,Npaw,R,Z;a=0.5*L-R,b=0.5*(L-R),args...)
+   @test a<b && L>=3R
+   function cut_off(r,a,b)
+      if r<=a
+         return 1.0
+      elseif r<b
+         return exp(-(r-a)^6/(b-r)^6)
+      else
+         return 0.0
+      end
+   end
+   X1 = [(L-R)/2,L/2,L/2]
+   X2 = [(L+R)/2,L/2,L/2]
+   X = zeros(3,2)
+   X[:,1] = X1
+   X[:,2] = X2
+   V(r) = -Z/r*cut_off(r,a,b)
+   p = pw_coulomb.params(N,L,X,Z,V)
+   fpaw = pawfunc(rc, X, p, Npaw, Z; proj=proj_num, diff_phi=diff_phi_num, Hdiff_phi=Hdiff_phi_num, args...)
+   psi, E, res = energy_vpaw(fpaw, p, guess_H2(rc,X1,X2,p, Z))
+   return psi, E
+end
 end
 
 module pawtest
-using Base.Test
-using PyPlot
-using eigensolvers
-using paw
+import ..paw
+import ..pw_coulomb
+import ..eigensolvers
+import ..vpawsolver
+
+using Test
+using Plots
 using Polynomials
-using pw_coulomb
-using vpawsolver
+using LinearAlgebra
+using .eigensolvers
+using .paw
+using .pw_coulomb
+using .vpawsolver
 
 """
-Orthogonality of \tilde\phi and \tilde p
+Orthogonality of  tilde phi and  tilde p
 
-tdphi_fft to test orthogonality of \tilde\phi_j and \tilde p_k
+tdphi_fft to test orthogonality of  tilde phi_j and  tilde p_k
 """
 function ortho_test(rc,N,L,Npaw,Z,mult;proj=vpawsolver.proj_num)
    V(x,y,z) = 1.
@@ -491,8 +526,8 @@ function ortho_test(rc,N,L,Npaw,Z,mult;proj=vpawsolver.proj_num)
    P = proj(rc, X[:,1], p, coefpaw)
    Npawtot = paw.Npawtot(Npaw)
    tdphi(r,l,n) = paw.tilde_R_nl(r,rc,n+l-1,l-1,Z,coefpaw.tdR[:,n,l])
-   temp_tdphi = zeros(Complex128, (2p.N1*mult+1, 2p.N2*mult+1, 2p.N3*mult+1, Npawtot))
-   tdPhi = zeros(Complex128, (p.size_psi..., Npawtot))
+   temp_tdphi = zeros(ComplexF64, (2p.N1*mult+1, 2p.N2*mult+1, 2p.N3*mult+1, Npawtot))
+   tdPhi = zeros(ComplexF64, (p.size_psi..., Npawtot))
    for ipaw in 1:(Npawtot)
       l,n,m = vpawsolver.int_to_nl(ipaw,Npaw)
       for i1 in 1:(2*p.N1*mult+1)
@@ -507,7 +542,7 @@ function ortho_test(rc,N,L,Npaw,Z,mult;proj=vpawsolver.proj_num)
       @views temp_tdphi[:,:,:,ipaw] = fft(temp_tdphi[:,:,:,ipaw]) #cannot do on site fft (not doing the right thing)
       @views tdPhi[:,:,:,ipaw] = pw_coulomb.fft_reshape(temp_tdphi[:,:,:,ipaw], p, mult, 1)
    end
-   out = zeros(Complex128,(Npawtot,Npawtot))
+   out = zeros(ComplexF64,(Npawtot,Npawtot))
    for i1 in 1:Npawtot
       for i2 in 1:Npawtot
          out[i1,i2] = 1/p.Ntot^2*L^3*vecdot(P[:,:,:,i1],tdPhi[:,:,:,i2])
