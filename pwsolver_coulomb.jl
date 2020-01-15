@@ -205,9 +205,11 @@ module tests_pwcoulomb
 import ..pw_coulomb
 
 using .pw_coulomb
+using Test
 using FFTW
 using LinearAlgebra
 using FastConv
+using DelimitedFiles
 
 # Solution of the hydrogen atom centered at X
 function phi_H(p::pw_coulomb.params, X, Z)
@@ -261,6 +263,29 @@ function H2_test(N,L,R,Z)
    return psi, E
 end
 
+# Coulomb potential with cut-off to get smoothness at boundary of the box
+function H2_test_cutoff(N,L,R,Z;a=0.5*L-R,b=0.5*(L-R))
+   @test a<b && L>=3R
+   function cut_off(r,a,b)
+      if r<=a
+         return 1.0
+      elseif r<b
+         return exp(-(r-a)^6/(b-r)^6)
+      else
+         return 0.0
+      end
+   end
+   X1 = [(L+R)/2,L/2,L/2]
+   X2 = [(L-R)/2,L/2,L/2]
+   X = zeros(3,2)
+   X[:,1] = X1
+   X[:,2] = X2
+   V(r) = -Z/r*cut_off(r,a,b)
+   p = pw_coulomb.params(N,L,X,Z,V)
+   psi, E, res = pw_coulomb.energy(p,phi_H2(p,X1,X2,Z),
+   tol=1e-10, maxiter=400)
+   return psi, E
+end
 
 function conv_H2(X1, X2, Nmin, Nmax, L)
    Ns = Nmin:5:Nmax
@@ -294,7 +319,7 @@ function herm(N,L,Z)
       end
    end
    pot_psi = convn(fftshift(pot),fftshift(psi))
-   return vecdot(psi,ifftshift(pot_psi[2p.N1+1:4p.N1+1,2p.N2+1:4p.N2+1,2p.N3+1:4p.N3+1]))
+   return dot(psi,ifftshift(pot_psi[2p.N1+1:4p.N1+1,2p.N2+1:4p.N2+1,2p.N3+1:4p.N3+1]))
 end
 
 
