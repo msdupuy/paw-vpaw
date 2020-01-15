@@ -180,8 +180,8 @@ function energy_paw(fpaw::pawfunc, p::pw_coulomb.params, seed)
        meankin = sum(p.kin[i]*abs2(psi[i]) for i = 1:p.Ntot) / (norm(psi)^2)
        return psi ./ (0.1*meankin .+ p.kin[:]) # this should be tuned but works more or less
     end
-   return eigensolvers.eig_lanczos(H_1var, seed[:], B=S_1var, m=3, Imax = 250, do_so=true, norm_A = 6pi^2*p.N1)
-   #return eigensolvers.eig_pcg(H_1var, seed[:];P =P, B=S_1var, tol=1e-3, maxiter = 1000)
+   #return eigensolvers.eig_lanczos(H_1var, seed[:], B=S_1var, m=3, Imax = 250, do_so=true, norm_A = 6pi^2*p.N1)
+   return eigensolvers.eig_pcg(H_1var, seed[:];P =P, B=S_1var, tol=1e-10, maxiter = 200)
 end
 
 function test_fft_H(N,L,rc,Npaw,Z)
@@ -234,4 +234,27 @@ function test_num_H2(N,L,rc,Npaw,R,Z;args...)
    return psi, E
 end
 
+function test_num_H2_cutoff(N,L,rc,Npaw,R,Z;a=0.5L-R,b=0.5(L-R),args...)
+   @test a<b && L>=3R
+   function cut_off(r,a,b)
+      if r<=a
+         return 1.0
+      elseif r<b
+         return exp(-(r-a)^6/(b-r)^6)
+      else
+         return 0.0
+      end
+   end
+   X1 = [(L-R)/2,L/2,L/2]
+   X2 = [(L+R)/2,L/2,L/2]
+   X = zeros(3,2)
+   X[:,1] = X1
+   X[:,2] = X2
+   coef_TM = paw.coef_TM(rc, 1, 0, Z, 1e-8)[1]
+   V(r) = paw.V_scr(r, 1, 0, rc, coef_TM, Z)*cut_off(r,a,b)
+   p = pw_coulomb.params(N,L,X,Z,V)
+   fpaw = pawfunc(rc, X, p, Npaw, Z; proj=vpawsolver.proj_num, args...)
+   psi, E, res = energy_paw(fpaw, p, vpawsolver.guess_H2(rc,X1,X2,p,Z))
+   return psi, E
+end
 end
