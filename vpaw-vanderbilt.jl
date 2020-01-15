@@ -3,7 +3,8 @@ module paw
 using Polynomials
 using QuadGK
 using GSL
-using Base.Test
+using Test
+using LinearAlgebra
 
 #harmonique spherique
 function Y_lm_real(x,y,z,l,m) #02/01/2018 : real Y_lm broken
@@ -20,7 +21,7 @@ end
 
 function Y_lm(x,y,z,l,m)
    r = sqrt(x^2 + y^2 + z^2)
-   phi = atan2(y,x)
+   phi = atan(y,x)
    if m >= 0
       return (-1)^m*GSL.sf_legendre_sphPlm(l, m, z/r)*exp(im*m*phi)
    else
@@ -49,8 +50,8 @@ end
 
 #Generation of Troullier-Martins pseudopotential
 """
-\tilde{R}(r) = r^{l+1} * exp(p(r))
-p(r) = \sum_{k=0}^6 c_{2k} r^{2k}
+tilde{R}(r) = r^{l+1} * exp(p(r))
+p(r) = sum_{k=0}^6 c_{2k} r^{2k}
 resolution par Newton sur le vecteur rescaled [c_{2k}r_c^{2k}]
 
 coef_p retourne le vecteur des coefficients [c_{2k}]
@@ -74,7 +75,7 @@ function coef_TM(rc, n, l, Z, tol)
       end
    end
    L(r) = GSL.sf_laguerre_n(n-l-1, 2l+1, 2Z*r/n)
-   b[1] = 1./(rc^(2*l+3.))*QuadGK.quadgk(r -> (r^(l+1)*L(r)*exp(-Z*r/n))^2, 0, rc)[1]
+   b[1] = 1/(rc^(2*l+3.))*QuadGK.quadgk(r -> (r^(l+1)*L(r)*exp(-Z*r/n))^2, 0, rc)[1]
    b[2] = -Z*rc/n + log(L(rc))
    b[3] = -Z*rc/n + lag_der(1)/L(rc)
    b[4] = (L(rc)*lag_der(2) - lag_der(1)^2)/L(rc)^2
@@ -146,7 +147,7 @@ function V_scr(r, n, l, rc, p, Z)
    else
       Q = Poly([0.,0.,1.])
       P = Poly(p)(Q)
-      return E_n(n,Z) + (l+1)/r*polyval(polyder(P), r) + 1./2.*(
+      return E_n(n,Z) + (l+1)/r*polyval(polyder(P), r) + 0.5*(
       polyval(polyder(P), r)^2 + polyval(polyder(P, 2), r)  )
    end
 end
@@ -241,7 +242,7 @@ function GS_VdB(N_I, l, Z, rc, coef_PAW, coef_PP)
          L_m = coef_PAW[:,m]
          L_V = coef_PP
          B[n,m] = QuadGK.quadgk(r -> tilde_R_nl(r, rc, n+l, l, Z, L_n)*
-         chi_nl(r, rc, m+l, l, Z, L_m, L_V), 0., rc, abstol=1e-14, reltol=1e-14)[1]
+         chi_nl(r, rc, m+l, l, Z, L_m, L_V), 0., rc, atol=1e-14, rtol=1e-14)[1]
       end
    end
    return B
@@ -272,7 +273,7 @@ function GS_custom(N_I, l, Z, rc, coef_PAW, coef_PP)
          L_n = coef_PAW[:,n]
          L_m = coef_PAW[:,m]
          L_V = coef_PP
-         B[n,m] = QuadGK.quadgk(r -> (r/rc*(1-r/rc))^2*tilde_R_nl(r, rc, n+l, l, Z, L_n)*tilde_R_nl(r, rc, m+l, l, Z, L_m), 0., rc, abstol=1e-14, reltol=1e-14)[1]
+         B[n,m] = QuadGK.quadgk(r -> (r/rc*(1-r/rc))^2*tilde_R_nl(r, rc, n+l, l, Z, L_n)*tilde_R_nl(r, rc, m+l, l, Z, L_m), 0., rc, atol=1e-14, rtol=1e-14)[1]
       end
    end
    return B
@@ -331,7 +332,7 @@ function S_ij(rc, Z, coef_PAW, Npaw)
       for m in 1:(2lpaw-1)
          for j in 1:Npaw[lpaw]
             for k in 1:Npaw[lpaw]
-               S[j+ind,k+ind] = QuadGK.quadgk(r -> Rnl_tdRnl(r,j+lpaw-1,lpaw-1)*Rnl_tdRnl(r,k+lpaw-1,lpaw-1), 0., rc, reltol=1e-10)[1]
+               S[j+ind,k+ind] = QuadGK.quadgk(r -> Rnl_tdRnl(r,j+lpaw-1,lpaw-1)*Rnl_tdRnl(r,k+lpaw-1,lpaw-1), 0., rc, rtol=1e-10)[1]
             end
          end
          ind += Npaw[lpaw]
@@ -340,7 +341,7 @@ function S_ij(rc, Z, coef_PAW, Npaw)
    return S
 end
 
-type pawcoef
+mutable struct pawcoef
    Z :: Float64 #atomic charge
    rc :: Float64 #cutoff radius
    Npaw :: Array{Integer,1}
@@ -349,9 +350,9 @@ type pawcoef
    coef_TM :: Array{Float64,1}
    function pawcoef(Z, rc :: Float64, Npaw :: Array{Int64,1}; GS = GS_VdB, proj_gen = coef_rad_proj)
       coefpaw = new(Z, rc, Npaw)
-      coefpaw.tdR = zeros(5,max(Npaw...),endof(Npaw))
-      coefpaw.proj = Array{Polynomials.Poly{Float64}}(max(Npaw...),endof(Npaw))
-      coef_PP = zeros(7,endof(Npaw))
+      coefpaw.tdR = zeros(5,max(Npaw...),length(Npaw))
+      coefpaw.proj = Array{Polynomials.Poly{Float64},2}(undef,maximum(Npaw),length(Npaw))
+      coef_PP = zeros(7,length(Npaw))
       for lpaw in eachindex(Npaw)
          for i in 1:Npaw[lpaw]
             coefpaw.tdR[:,i,lpaw] = coef_tilde_R(rc, i+lpaw-1, lpaw-1, Z)
@@ -371,12 +372,15 @@ end
 
 
 module pawgentest
+import ..paw
+
 using Polynomials
-using paw
-using PyPlot
+using Plots
 using Cubature
 using QuadGK
 using GSL
+using LinearAlgebra
+using .paw
 
 function int3D(f,rc) #integration on the box [-rc,rc]^3 for functions with singularity at (0,0,0) // awful compared to radial 1D integration
    out = 0
@@ -481,7 +485,7 @@ function ortho_test_rad(rc,Npaw,Z)
          l1,n1,m1 = int_to_nl(i1,Npaw)
          l2,n2,m2 = int_to_nl(i2,Npaw)
          real_f(r) = f(r,n1+l1-1,l1-1,m1,n2+l2-1,l2-1,m2)
-         D[i1,i2] = QuadGK.quadgk(real_f, 0.,rc, abstol=1e-9, reltol=1e-9)[1]
+         D[i1,i2] = QuadGK.quadgk(real_f, 0.,rc, atol=1e-9, rtol=1e-9)[1]
       end
    end
    return D
@@ -503,7 +507,7 @@ function ortho_custom_test_rad(rc,Npaw,Z)
          l1,n1,m1 = int_to_nl(i1,Npaw)
          l2,n2,m2 = int_to_nl(i2,Npaw)
          real_f(r) = f(r,n1+l1-1,l1-1,m1,n2+l2-1,l2-1,m2)
-         D[i1,i2] = QuadGK.quadgk(real_f, 0.,rc, abstol=1e-9, reltol=1e-9)[1]
+         D[i1,i2] = QuadGK.quadgk(real_f, 0.,rc, atol=1e-9, rtol=1e-9)[1]
       end
    end
    return D
@@ -511,7 +515,7 @@ end
 
 function ortho_test(rc,Npaw,Z)
    Npawtot = paw.Npawtot(Npaw)
-   D = zeros(Complex128,(Npawtot,Npawtot))
+   D = zeros(ComplexF64,(Npawtot,Npawtot))
    coefpaw = paw.pawcoef(Z,rc,Npaw)
    function f(X,n1,l1,m1,n2,l2,m2)
       if norm(X) < rc
