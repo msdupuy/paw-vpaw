@@ -1,15 +1,22 @@
 module pawsolver
-using Base.Test
-using QuadGK
-using PyPlot
-using eigensolvers
-using paw
-using Polynomials
-using pw_coulomb
-using vpawsolver
-using GSL
+import ..eigensolvers
+import ..paw
+import ..pw_coulomb
+import ..vpawsolver
 
-type pawfunc
+using Test
+using QuadGK
+using Plots
+using Polynomials
+using GSL
+using LinearAlgebra
+using FFTW
+using .eigensolvers
+using .paw
+using .pw_coulomb
+using .vpawsolver
+
+mutable struct pawfunc
    rc :: Float64 #cut-off radius
    p :: pw_coulomb.params
    X :: Array{Float64, 2} #positions of the atoms
@@ -25,7 +32,7 @@ type pawfunc
       coefpaw = paw.pawcoef(Z, rc, Npaw; args...)
       fpaw.DH = zeros(Float64, (Npawtot,Npawtot,fpaw.Nat))
       fpaw.DS = zeros(Float64, (Npawtot,Npawtot,fpaw.Nat))
-      fpaw.P = zeros(Complex128, (p.size_psi..., Npawtot, fpaw.Nat))
+      fpaw.P = zeros(ComplexF64, (p.size_psi..., Npawtot, fpaw.Nat))
       for iat in 1:fpaw.Nat
          fpaw.DS[:,:,iat] = S_ij(rc, Z, coefpaw.tdR, Npaw)
          fpaw.DH[:,:,iat] = D_ij(rc, X, coefpaw.tdR, iat, coefpaw.coef_TM, Npaw, Z)[1]
@@ -57,8 +64,8 @@ end
 function D_ij(rc, X, coef_PAW, N, coef_TM, Npaw, Z) #N : atom site (working)
    Rnl_diff(r, rc, l1, l2, coef_PAW, j, k) = paw.R_nl(r, l1+j, l1, Z)*paw.R_nl(r, l2+k, l2, Z) - paw.tilde_R_nl(r, rc, l1+j, l1, Z, coef_PAW[:,j,l1+1])*paw.tilde_R_nl(r, rc, l2+k, l2, Z, coef_PAW[:,k,l2+1])
    Npawtot = paw.Npawtot(Npaw)
-   D = zeros(Complex128,(Npawtot,Npawtot))
-   err = zeros(Complex128,(Npawtot,Npawtot))
+   D = zeros(ComplexF64,(Npawtot,Npawtot))
+   err = zeros(ComplexF64,(Npawtot,Npawtot))
    ind = 0
    for lpaw in eachindex(Npaw)
       l = lpaw -1
@@ -79,7 +86,7 @@ function D_ij(rc, X, coef_PAW, N, coef_TM, Npaw, Z) #N : atom site (working)
       return D, err
    else
       Y = X[:,1:end .!=N]
-      pot(x,y,z) = Z*sum(-1/norm([x,y,z] + X[:,N] - Y[:,i3]) for i3 in 1:(endof(X[1,:])-1))
+      pot(x,y,z) = Z*sum(-1/norm([x,y,z] + X[:,N] - Y[:,i3]) for i3 in 1:(length(X[1,:])-1))
       for i in 1:Npawtot
          for j in 1:Npawtot
             l1, n1, m1 = vpawsolver.int_to_nl(i, Npaw)
@@ -115,7 +122,7 @@ function S_ij(rc, Z, coef_PAW, Npaw)
       for m in 1:(2lpaw-1)
          for j in 1:Npaw[lpaw]
             for k in 1:Npaw[lpaw]
-               S[j+ind,k+ind] = QuadGK.quadgk(r -> Rnl_tdRnl(r,lpaw,j,k), 0., rc, abstol=1e-10, reltol=1e-10)[1]
+               S[j+ind,k+ind] = QuadGK.quadgk(r -> Rnl_tdRnl(r,lpaw,j,k), 0., rc, atol=1e-10, rtol=1e-10)[1]
             end
          end
          ind += Npaw[lpaw]
@@ -125,15 +132,15 @@ function S_ij(rc, Z, coef_PAW, Npaw)
 end
 
 """
-tdH_paw computes \tilde H \tilde\psi
+tdH_paw computes tilde H tilde psi
 """
 
 function tdH_paw(fpaw::pawfunc, p::pw_coulomb.params, psi)
    L = p.L1*p.L2*p.L3
-   Ppsi = zeros(Complex128, (fpaw.Npawtot, fpaw.Nat))
+   Ppsi = zeros(ComplexF64, (fpaw.Npawtot, fpaw.Nat))
    for iat in 1:fpaw.Nat
       for ipaw in 1:fpaw.Npawtot
-         Ppsi[ipaw, iat] = 1/p.Ntot^2*L*vecdot(fpaw.P[:,:,:,ipaw,iat], psi)
+         Ppsi[ipaw, iat] = 1/p.Ntot^2*L*dot(fpaw.P[:,:,:,ipaw,iat], psi)
       end
    end
    tdpsi = pw_coulomb.ham(p, psi)
@@ -146,15 +153,15 @@ function tdH_paw(fpaw::pawfunc, p::pw_coulomb.params, psi)
 end
 
 """
-tdH_paw computes \tilde S \tilde\psi
+tdH_paw computes tilde S tilde psi
 """
 
 function tdS_paw(fpaw::pawfunc, p::pw_coulomb.params, psi)
    L = p.L1*p.L2*p.L3
-   Ppsi = zeros(Complex128, (fpaw.Npawtot, fpaw.Nat))
+   Ppsi = zeros(ComplexF64, (fpaw.Npawtot, fpaw.Nat))
    for iat in 1:fpaw.Nat
       for ipaw in 1:fpaw.Npawtot
-         Ppsi[ipaw,iat] = 1/p.Ntot^2*L*vecdot(fpaw.P[:,:,:,ipaw,iat], psi)
+         Ppsi[ipaw,iat] = 1/p.Ntot^2*L*dot(fpaw.P[:,:,:,ipaw,iat], psi)
       end
    end
    tdpsi = psi
@@ -170,7 +177,7 @@ function energy_paw(fpaw::pawfunc, p::pw_coulomb.params, seed)
    H_1var(psi) = tdH_paw(fpaw, p, reshape(psi, p.size_psi))[:]
    S_1var(psi) = tdS_paw(fpaw, p, reshape(psi, p.size_psi))[:]
    function P(psi)
-       meankin = sum(p.kin[i]*abs2(psi[i]) for i = 1:p.Ntot) / (vecnorm(psi)^2)
+       meankin = sum(p.kin[i]*abs2(psi[i]) for i = 1:p.Ntot) / (norm(psi)^2)
        return psi ./ (0.1*meankin .+ p.kin[:]) # this should be tuned but works more or less
     end
    return eigensolvers.eig_lanczos(H_1var, seed[:], B=S_1var, m=3, Imax = 250, do_so=true, norm_A = 6pi^2*p.N1)
