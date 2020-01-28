@@ -51,7 +51,7 @@ function int3D(f,rc) #integration on the box [-rc,rc]^3 for functions with singu
    for i1 in 0:1
       for i2 in 0:1
          for i3 in 0:1
-            x,y = Cubature.hcubature(f, [-rc*(1-i1),-rc*(1-i2),-rc*(1-i3)], [rc*i1,rc*i2,rc*i3],abstol=1e-7,reltol=1e-7,maxevals=100000)
+            x,y = Cubature.hcubature(f, [-rc*(1-i1),-rc*(1-i2),-rc*(1-i3)], [rc*i1,rc*i2,rc*i3],abstol=1e-9,reltol=1e-8,maxevals=100000)
             out += x
             err += y
          end
@@ -395,7 +395,7 @@ function energy_vpaw(fpaw::pawfunc, p::pw_coulomb.params, seed)
        return psi ./ (0.1*meankin .+ p.kin[:]) # this should be tuned but works more or less
    end
 #   return eigensolvers.eig_lanczos(H_1var, seed[:], B=S_1var, m=5, Imax = 400, do_so=true, norm_A = 6pi^2*p.N1)
-   return eigensolvers.eig_pcg(H_1var, seed[:],P=P, B=S_1var, tol=1e-5, maxiter = 400)
+   return eigensolvers.eig_pcg(H_1var, seed[:],P=P, B=S_1var, tol=1e-10, maxiter = 400)
 end
 
 function tdphi_test(N,L,X,p::pw_coulomb.params,rc, Z)
@@ -478,7 +478,7 @@ function test_num_H2_cutoff(N,L,rc,Npaw,R,Z;a=0.5*L-R,b=0.5*(L-R),args...)
       if r<=a
          return 1.0
       elseif r<b
-         return exp(-(r-a)^6/(b-r)^6)
+         return exp(-1/(b-r))/(exp(-1/(r-a))+exp(-1/(b-r)))
       else
          return 0.0
       end
