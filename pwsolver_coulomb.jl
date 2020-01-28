@@ -59,7 +59,7 @@ Type params contain all info for PW calculations
    end
 
    function multiplier(N) #returns FFT multiplier to have consistent FFT with regard to the plane-wave cut-off
-      return max(2,trunc(Int,60/(2N))) :: Integer
+      return max(4,trunc(Int,60/(2N))) :: Integer
    end
 
    #Coulomb potential separated into two parts : radial + regular, computed on a grid twice larger
