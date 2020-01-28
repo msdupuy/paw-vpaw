@@ -240,7 +240,7 @@ function test_num_H2_cutoff(N,L,rc,Npaw,R,Z;a=0.5L-R,b=0.5(L-R),args...)
       if r<=a
          return 1.0
       elseif r<b
-         return exp(-(r-a)^6/(b-r)^6)
+         return exp(-1/(b-r))/(exp(-1/(r-a))+exp(-1/(b-r)))
       else
          return 0.0
       end
